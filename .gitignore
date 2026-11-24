@@ -1,0 +1,5 @@
+# Session-specific metadata
+.bohrium/
+
+# Web-fetch extraction cache
+web/
