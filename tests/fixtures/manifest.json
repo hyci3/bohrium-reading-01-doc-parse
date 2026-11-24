@@ -1,0 +1,68 @@
+{
+  "schema_version": "1.0",
+  "synthetic_only": true,
+  "generator": "tests/make_fixtures.py",
+  "fixtures": [
+    {
+      "id": "basic-two-column",
+      "generated_path": "basic/two-column.pdf",
+      "source": "Deterministic synthetic PDF generated with built-in Helvetica text",
+      "license": "Project-generated test material",
+      "coverage": [
+        "two-column ordering",
+        "full-width heading",
+        "repeated page header",
+        "page coverage",
+        "dynamic case contract"
+      ],
+      "gold": "tests/fixtures/two-column-gold.json"
+    },
+    {
+      "id": "single-column",
+      "generated_path": "single/single-column.pdf",
+      "source": "Deterministic synthetic PDF generated with built-in Helvetica text",
+      "license": "Project-generated test material",
+      "coverage": [
+        "single-column no-regression",
+        "section recognition"
+      ]
+    },
+    {
+      "id": "advanced-local",
+      "generated_path": "advanced/",
+      "source": "Locally generated with PyMuPDF when available",
+      "license": "Project-generated test material",
+      "coverage": [
+        "scanned page without text layer",
+        "encrypted PDF",
+        "corrupt PDF"
+      ],
+      "required_for_current_environment": true
+    }
+  ],
+  "real_world_fixture": {
+    "required_before_m3_completion": true,
+    "source": "Separately downloaded open-access paper; generated inventory records actual URL and SHA-256",
+    "must_not_be_committed": true
+  },
+  "local_real_world_records": [
+    {
+      "title": "Attention Is All You Need",
+      "source_url": "https://arxiv.org/pdf/1706.03762",
+      "generated_path": "real/attention.pdf",
+      "pages": 15,
+      "sha256": "bdfaa68d8984f0dc02beaca527b76f207d99b666d31d1da728ee0728182df697",
+      "coverage": ["ordinary PDF extraction", "overlapping formula-region regression"],
+      "original_binary_committed": false
+    },
+    {
+      "title": "Deep Residual Learning for Image Recognition",
+      "source_url": "https://arxiv.org/pdf/1512.03385",
+      "generated_path": "real/resnet.pdf",
+      "pages": 12,
+      "sha256": "1e0651b6810ecba34a3dbc5b5b0209226f889004607c1f203540a48d64e5a93a",
+      "coverage": ["true two-column reading order", "naive/layout comparison", "Agent evidence question on physical page 3"],
+      "original_binary_committed": false
+    }
+  ]
+}

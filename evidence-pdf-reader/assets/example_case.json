@@ -1,0 +1,20 @@
+{
+  "example": true,
+  "case_id": "illustrative-synthetic-case",
+  "pdf": "<path-to-synthetic-paper.pdf>",
+  "output_contract": {
+    "fields": {
+      "answer": {
+        "type": "string",
+        "required": true
+      },
+      "uncertainties": {
+        "type": "array",
+        "required": false
+      }
+    },
+    "required": [
+      "answer"
+    ]
+  }
+}

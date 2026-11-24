@@ -3,3 +3,9 @@
 
 # Web-fetch extraction cache
 web/
+
+# Local development and runtime artifacts
+.work/
+.out/
+__pycache__/
+*.py[cod]

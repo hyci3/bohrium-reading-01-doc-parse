@@ -1,0 +1,33 @@
+{
+  "example": true,
+  "case_id": "illustrative-synthetic-case",
+  "answer": "Illustrative answer based on a synthetic PDF; this is not an official case result.",
+  "uncertainties": [
+    "Replace this illustrative item with any actual limitation found in the source."
+  ],
+  "status": "partial",
+  "sources": [
+    {
+      "block_id": "p0001-b0001",
+      "page_number": 1,
+      "quote": "Illustrative source text"
+    }
+  ],
+  "uncertainty": [
+    "Illustration only; no real OCR or model run was performed."
+  ],
+  "change_records": [
+    {
+      "sequence": 1,
+      "stage": "illustration",
+      "description": "Example JSON showing the shape of a result, not a fabricated execution record."
+    }
+  ],
+  "errors": [
+    {
+      "kind": "example_only",
+      "stage": "illustration",
+      "message": "This file exists solely to explain the output interface."
+    }
+  ]
+}

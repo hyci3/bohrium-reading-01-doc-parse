@@ -1,0 +1,19 @@
+{
+  "schema_version": "1.0",
+  "case_id": "synthetic-basic-v1",
+  "gold_source": "Manual reading-order annotation independent of extraction and sorting code",
+  "pages": {
+    "1": [
+      "A FULL WIDTH SECTION TITLE FOR THE TEST DOCUMENT",
+      "L1 Left column opening statement.",
+      "L2 Left column continuing details.",
+      "R1 Right column opening note.",
+      "R2 Right column continuing note."
+    ],
+    "2": [
+      "A SECOND FULL WIDTH SECTION FOR EXTRACTION",
+      "S1 The following single column has one result.",
+      "S2 The section ends with an acknowledged limitation."
+    ]
+  }
+}
