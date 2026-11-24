@@ -1,0 +1,5 @@
+# Preferred PDF extraction backend; all other Python modules use the standard library.
+PyMuPDF==1.28.2
+
+# Poppler (pdftotext, pdfinfo, pdftoppm) and OCR engines are external runtime tools.
+# They are detected at runtime; this file does not install OCR models or platform tools.
