@@ -130,6 +130,22 @@ python "<installed-skill-dir>/scripts/run.py" validate-package --skill-dir "<ins
 
 复制并读回只能记为 Installed，不能记为已经发现或 Ready。
 
+### 5.3 项目级扫描根（DSH）
+
+DSH 除了用户级技能目录，还会扫描工作目录所属项目根的 `.dsh/skills/` 与 `.agents/skills/`。因此可以只在本仓库内安装，不改动用户全局技能目录：
+
+```bash
+mkdir -p .dsh/skills
+cp -r evidence-pdf-reader .dsh/skills/evidence-pdf-reader
+find .dsh/skills/evidence-pdf-reader -name __pycache__ -type d -exec rm -rf {} +
+python .dsh/skills/evidence-pdf-reader/scripts/run.py validate-package --skill-dir .dsh/skills/evidence-pdf-reader --output work/installed-package-check.json
+```
+
+- 把 `.dsh/skills/` 写入 `.gitignore`：安装副本不进版本库，源码仍以 `evidence-pdf-reader/` 为准。
+- 副本必须与源码一致：`diff -r evidence-pdf-reader .dsh/skills/evidence-pdf-reader` 应无输出（比较前清理双方的 `__pycache__`）。
+- 更新流程是「改源码 → 重新复制 → 校验」，不要直接修改安装副本。
+- 新会话的技能清单出现 `evidence-pdf-reader`、描述取自 `SKILL.md` frontmatter，只说明已被发现；触发与不触发是否符合预期，仍须按第 8 节在真实任务里验证。
+
 ## 6. Harness 发布目录与运行目录
 
 若真实 Harness 使用约定的 `/app/submission/`、`/app/work/`、`/app/output/` 路径，应在获得该环境写入授权后，将工作副本的**内容**复制到 submission 根，使 `/app/submission/SKILL.md` 存在。不要多包一层同名父目录，也不要覆盖已有正式案例材料。
