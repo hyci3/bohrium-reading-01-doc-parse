@@ -50,7 +50,7 @@ finalize-result       validate-result               validate-package
 ## 验证数字（2026-11-26）
 
 - `unittest`：**84 项全部通过**（0 跳过）。
-- 包校验：**18 个文件、191680 字节、0 错误 0 警告**。
+- 包校验：**18 个文件、192081 字节、0 错误 0 警告**。
 - 真实论文：BERT / ViT / DETR / LoRA / Attention / ResNet 六篇，PyMuPDF 117 页 + Poppler 重复处理 68 页 = 9 次后端运行 185 运行页，失败与跳过页均为 0。
 
 ## 已知局限

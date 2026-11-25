@@ -80,7 +80,7 @@ python evidence-pdf-reader/scripts/run.py validate-package --skill-dir evidence-
 python evidence-pdf-reader/scripts/run.py capabilities --output "$workDir/capabilities.json"
 ```
 
-预期 `package-validation.json` 中 `valid=true`，且命令输出 `package_valid=True`。正式资源包当前包含 18 个文件，总计 191680 字节；后续合法变更可能改变这些数字，但始终要满足最多 50 个 UTF-8 文本文件、单文件不超过 500 KB、总量不超过 2 MB、无符号链接的限制。
+预期 `package-validation.json` 中 `valid=true`，且命令输出 `package_valid=True`。正式资源包当前包含 18 个文件，总计 192081 字节；后续合法变更可能改变这些数字，但始终要满足最多 50 个 UTF-8 文本文件、单文件不超过 500 KB、总量不超过 2 MB、无符号链接的限制。
 
 检查 `capabilities.json`：
 

@@ -87,6 +87,14 @@ def _numbered_heading(block: dict[str, Any], text: str, font_size_reference: flo
         return False
     if len(text) > 120 or len(text.split()) > 16:
         return False
+    # A line made only of numbers is a table row or a page number, never a section title.
+    letters = len(re.findall(r"[A-Za-z]", text))
+    if letters == 0:
+        return False
+    # Repeated "value unit" pairs are table cells, e.g. "41 GB 41 GB 41 GB".
+    numeric_runs = re.findall(r"\d+(?:\.\d+)?", text)
+    if len(numeric_runs) >= 3 and letters <= 3 * len(numeric_runs):
+        return False
     if _math_fragment(text):
         return False
     words = text.split()
