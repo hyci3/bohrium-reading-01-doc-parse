@@ -311,5 +311,61 @@ class OrderEvaluationAccountingTest(unittest.TestCase):
         self.assertEqual(report["exact_page_count"], 1)
 
 
+class BlockClassificationTest(unittest.TestCase):
+    def test_numbered_sentences_and_fragments_are_not_headings(self) -> None:
+        samples = [
+            "3. Is the software that was used to preprocess/clean/label the data available?",
+            "2. Llama 2-Chat, a fine-tuned version of Llama 2 that is optimized for dialogue use cases.",
+            "2 of the first quantization as inputs to a second quantization.",
+        ]
+        for text in samples:
+            item = _classify({"text": text, "original_kind": "body"})
+            self.assertEqual(item["kind"], "body", text)
+            self.assertIsNone(item.get("heading_level"))
+
+    def test_math_fragments_are_formula_not_headings(self) -> None:
+        for text in ["2 , WNF4) + XBF16LBF16", "1 , ck-bit", "\x12 i + 1", "1 LBF16"]:
+            item = _classify({"text": text, "original_kind": "body"})
+            self.assertEqual(item["kind"], "formula", text)
+            self.assertTrue(
+                any(warning.startswith("formula_fragment_unverified") for warning in item["warnings"]),
+                item["warnings"],
+            )
+
+    def test_numeric_table_row_is_not_a_formula(self) -> None:
+        item = _classify({"text": "7B 2k ✗ 1.0T 3.0 × 10−4", "original_kind": "body"})
+        self.assertEqual(item["kind"], "body")
+
+    def test_appendix_headings_get_levels_and_section_path(self) -> None:
+        source = page(47, [
+            block("r0", "A.2 Additional Details for Pretraining", 50, 50, 500, 66),
+            block("r1", "A.2.1 Architecture Changes Compared to Llama 1", 50, 80, 500, 96),
+            block("r2", "Grouped-Query Attention. A standard practice is to cache keys only.", 50, 110, 500, 126),
+        ])
+        pages, _ = order_pages([source])
+        sections = [item["kind"] for item in pages[0]["blocks"]]
+        self.assertEqual(sections[:2], ["heading", "heading"])
+        self.assertEqual(pages[0]["blocks"][0]["heading_level"], 2)
+        self.assertEqual(pages[0]["blocks"][1]["heading_level"], 3)
+        self.assertEqual(
+            pages[0]["blocks"][2]["section_path"],
+            ["A.2 Additional Details for Pretraining", "A.2.1 Architecture Changes Compared to Llama 1"],
+        )
+
+    def test_table_blocks_keep_one_line_per_row(self) -> None:
+        item = _classify({
+            "text": "65B 99.3 4.4 41GB 33B 97.8 4.4 21GB",
+            "original_kind": "table",
+            "rows": [["", "MMLU", "Squad", "Memory"], ["65B", "99.3", "4.4", "41GB"], ["33B", "97.8", "4.4", "21GB"]],
+        })
+        self.assertEqual(item["kind"], "table")
+        self.assertEqual(item["table_row_count"], 3)
+        self.assertEqual(item["table_column_count"], 4)
+        lines = item["text"].split("\n")
+        self.assertEqual(len(lines), 3)
+        self.assertEqual(lines[1], "65B | 99.3 | 4.4 | 41GB")
+        self.assertIn("table_warning", item)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -8,7 +8,74 @@ from typing import Any
 TERMINAL_RE = re.compile(r"[.!?:;。！？；：)\]」』】]$")
 CAPTION_RE = re.compile(r"^\s*(figure|fig\.?|table|图|表)\s*([A-Za-z]?\d+(?:\.\d+)*)(?=\s*[:.．。：])", re.I)
 NUMBERED_HEADING_RE = re.compile(r"^\d+(?:\.\d+)*[.)]?\s+\S")
+# Letter-numbered appendix headings ("A.2", "A.2.1", "Appendix B") never match NUMBERED_HEADING_RE.
+APPENDIX_HEADING_RE = re.compile(r"^(?:[A-Z](?:\.\d+)+|Appendix\s+[A-Z])\b")
 EQUATION_NUMBER_RE = re.compile(r"(?:\(|（)(\d+(?:\.\d+)*)(?:\)|）)\s*$")
+CONTROL_CHARS_RE = re.compile(r"[\x10-\x1f]")
+MATH_SYMBOL_RE = re.compile(r"[=+\-−×·*/^_∑∫∂≈≤≥±<>(){}\[\]]")
+MATH_STRONG_RE = re.compile(r"[=≈≤≥±∑∫∂^_]")
+CAPTION_PREFIX_RE = re.compile(r"^\s*(figure|fig\.?|table|图|表)\b", re.I)
+# A heading never starts its title with a function word; prose that begins "2 of the first ..." is a
+# continuation fragment whose leading superscript was split into its own text run.
+HEADING_STOPWORDS = frozenset({
+    "of", "and", "the", "for", "with", "in", "to", "as", "that", "which", "is", "are", "we",
+    "this", "by", "from", "on", "at", "when", "where", "since", "because", "it", "its", "our",
+    "their", "be", "been", "was", "were", "has", "have", "had", "not", "but", "or", "if", "then",
+    "than", "so", "such", "these", "those", "an", "into", "over", "under", "between", "both",
+})
+HEADING_TERMINAL_PUNCTUATION = ".,;:。，；：?!！？"
+
+
+def _math_fragment(text: str) -> bool:
+    """Heuristic: text that is a fragment of a formula rather than prose.
+
+    PyMuPDF emits math as several runs, sometimes with private control code points, so these
+    fragments must not be trusted as headings or quoted as complete equations. Numeric data
+    rows are deliberately excluded: they are long and contain no operators or control codes.
+    """
+    if not text or CAPTION_PREFIX_RE.match(text):
+        return False
+    if CONTROL_CHARS_RE.search(text):
+        return True
+    compact = "".join(ch for ch in text if not ch.isspace())
+    if not compact:
+        return False
+    letters = sum(1 for ch in compact if ch.isalpha())
+    digits = sum(1 for ch in compact if ch.isdigit())
+    symbols = sum(1 for ch in compact if MATH_SYMBOL_RE.match(ch))
+    number_tokens = re.findall(r"\d+(?:\.\d+)?", text)
+    if len(compact) <= 80 and MATH_STRONG_RE.search(text) and letters / len(compact) <= 0.45:
+        return True
+    # A run that opens with an equation number or a stray superscript and carries operators is a
+    # piece of a broken formula, e.g. "2 , WNF4) + XBF16LBF16" or "1 , ck-bit".
+    if re.match(r"^\d+\s*[,，)]", text) and re.search(r"[=+()\[\]^_-]", text):
+        return True
+    if (
+        len(compact) <= 24
+        and 1 <= letters <= 3
+        and symbols >= 1
+        and digits + symbols >= 2
+        and len(number_tokens) <= 2
+    ):
+        return True
+    tokens = text.split()
+    if (
+        len(tokens) <= 3
+        and re.search(r"[a-z]{3,}", text) is None
+        and re.search(r"[A-Z]", text)
+        and re.search(r"\d", text)
+        and re.search(r"\([A-Za-z]{2,}", text) is None
+        and (text[:1].isdigit() or re.search(r"[=+^_∑∫∂<>]", text) is not None)
+    ):
+        return True
+    return False
+
+
+def _heading_level(text: str) -> int:
+    first = text.split()[0].strip(".,;:)")
+    if re.fullmatch(r"[A-Z](?:\.\d+)+", first) or re.fullmatch(r"\d+(?:\.\d+)*", first):
+        return first.count(".") + 1
+    return 1
 
 
 def normalized(value: str) -> str:
@@ -16,12 +83,30 @@ def normalized(value: str) -> str:
 
 
 def _numbered_heading(block: dict[str, Any], text: str, font_size_reference: float | None) -> bool:
-    if len(text) > 180 or not NUMBERED_HEADING_RE.match(text):
+    if not (NUMBERED_HEADING_RE.match(text) or APPENDIX_HEADING_RE.match(text)):
         return False
-    parts = text.split(maxsplit=1)
-    if len(parts) > 1:
-        second_token = parts[1].split()[0]
-        if re.fullmatch(r"\d+(?:[.,]\d+)*", second_token) or re.fullmatch(r"[x×*]", second_token, re.I):
+    if len(text) > 120 or len(text.split()) > 16:
+        return False
+    if _math_fragment(text):
+        return False
+    words = text.split()
+    # Headings are labels, not sentences: terminal punctuation betrays numbered list items and
+    # prose whose leading superscript became a separate run. Short labels such as
+    # "5 Conclusion." legitimately end with a period, so only phrase-length runs are rejected.
+    if len(words) >= 4 and text.rstrip()[-1:] in HEADING_TERMINAL_PUNCTUATION:
+        return False
+    # An arithmetic expression that closes with a bracket is a figure/table label, not a section.
+    if re.search(r"[)\]]\s*$", text) and re.search(r"[=+×·/]", text):
+        return False
+    if len(words) > 1:
+        second_token = words[1].strip(".,;:)")
+        if not second_token:
+            return False
+        if second_token.lower() in HEADING_STOPWORDS:
+            return False
+        if re.fullmatch(r"[A-Z]*\d+[A-Z0-9]*", second_token):
+            return False
+        if re.fullmatch(r"[^\w]+", second_token):
             return False
     font_size = block.get("font_size_max")
     if isinstance(font_size, (int, float)) and font_size_reference and font_size < font_size_reference * 0.85:
@@ -57,7 +142,21 @@ def _classify(
     text = normalized(item.get("text", ""))
     if item.get("original_kind") == "table":
         item["kind"] = "table"
-    elif item.get("original_kind") == "figure":
+        rows = item.get("rows")
+        if isinstance(rows, list) and rows:
+            # Keep physical rows on their own lines: a single flattened line invites row/column
+            # misreads (e.g. reading a neighbouring row's cell as the target model's score).
+            item["table_row_count"] = len(rows)
+            item["table_column_count"] = max((len(row) for row in rows), default=0)
+            item["text"] = "\n".join(
+                " | ".join("" if cell is None else str(cell) for cell in row) for row in rows
+            )
+            item["table_warning"] = (
+                "Table text keeps one line per detected row; cells are extractor output, so merged "
+                "cells and row spans still require source-page verification"
+            )
+            return _source_defaults(item)
+    if item.get("original_kind") == "figure":
         item["kind"] = "figure"
     else:
         caption = CAPTION_RE.match(text)
@@ -69,15 +168,23 @@ def _classify(
         elif equation and len(text) <= 300 and re.search(r"[=+\-*/^_≤≥∑∫]", text):
             item["kind"] = "formula"
             item["formula_number"] = equation.group(1)
+        elif _math_fragment(text):
+            item["kind"] = "formula"
+            item["warnings"] = list(item.get("warnings") or []) + [
+                "formula_fragment_unverified: text is a fragment of a formula, not a complete equation; "
+                "review the page image before quoting it"
+            ]
+        elif (
+            (NUMBERED_HEADING_RE.match(text) or APPENDIX_HEADING_RE.match(text))
+            and _bottom_margin_numbered_prose(item, text, page_height)
+        ):
+            item["kind"] = "body"
+            item["warnings"] = list(item.get("warnings") or []) + [
+                "Numbered prose in the bottom margin treated as body rather than a verified heading; review possible footnote"
+            ]
         elif _numbered_heading(item, text, font_size_reference):
-            if _bottom_margin_numbered_prose(item, text, page_height):
-                item["kind"] = "body"
-                item["warnings"] = list(item.get("warnings") or []) + [
-                    "Numbered prose in the bottom margin treated as body rather than a verified heading; review possible footnote"
-                ]
-            else:
-                item["kind"] = "heading"
-                item["heading_level"] = text.split()[0].strip(".)").count(".") + 1
+            item["kind"] = "heading"
+            item["heading_level"] = _heading_level(text)
         elif re.match(r"(?i)^(?:abstract|references|acknowledg\w*|appendix)\b", text) and len(text) <= 180:
             item["kind"] = "heading"
             item["heading_level"] = 1

@@ -163,23 +163,39 @@ def _index_payload(document: dict[str, Any], profile: dict[str, int], index_path
     limit = int(profile["document_index_max_tokens"])
     omitted_special = 0
     omitted_pages = 0
-    remaining_tokens = estimate_json_tokens(index)
-    while remaining_tokens > limit and index["special_blocks"]:
-        remaining_tokens -= estimate_json_tokens(index["special_blocks"].pop()) + 2
+    omitted_sections: list[str] = []
+    index["indexed_page_count"] = 0
+
+    def refresh_truncation_counters() -> None:
+        # The counters and warnings themselves cost tokens, so they must be written before the
+        # budget is re-measured; otherwise a trimmed index can still land slightly over budget.
+        if omitted_special:
+            index["omitted_special_block_count"] = omitted_special
+            index["truncated"] = True
+        if omitted_pages:
+            index["omitted_page_count"] = omitted_pages
+            index["page_index_continuation"] = (
+                "Use --page for unlisted pages; the inventory contains stable block references."
+            )
+            index["truncated"] = True
+
+    while estimate_json_tokens(index) > limit and index["special_blocks"]:
+        index["special_blocks"].pop()
         omitted_special += 1
-    while remaining_tokens > limit and index["pages"]:
-        remaining_tokens -= estimate_json_tokens(index["pages"].pop()) + 2
-        omitted_pages += 1
+        refresh_truncation_counters()
     while estimate_json_tokens(index) > limit and index["pages"]:
         index["pages"].pop()
         omitted_pages += 1
-    if omitted_special:
-        index["omitted_special_block_count"] = omitted_special
-        index["truncated"] = True
-    if omitted_pages:
-        index["omitted_page_count"] = omitted_pages
-        index["page_index_continuation"] = "Use --page for unlisted pages; the inventory contains stable block references."
-        index["truncated"] = True
+        refresh_truncation_counters()
+    for optional_key in ("rendered_pages", "title_candidates"):
+        if estimate_json_tokens(index) <= limit:
+            break
+        if index.get(optional_key):
+            index[optional_key] = []
+            omitted_sections.append(optional_key)
+            index["truncated"] = True
+    if omitted_sections:
+        index["omitted_sections"] = omitted_sections
     index["indexed_page_count"] = len(index["pages"])
     atomic_write_json(inventory_path, inventory)
     return index, inventory_path

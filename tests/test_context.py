@@ -366,6 +366,37 @@ class IndexBudgetingTest(unittest.TestCase):
         self.assertEqual(index["indexed_page_count"] + index.get("omitted_page_count", 0), 4)
         self.assertTrue(index["truncated"])
 
+    def test_special_block_trimming_lands_inside_the_budget(self) -> None:
+        pages = []
+        order = 0
+        for page_number in range(1, 61):
+            blocks = []
+            for index in range(6):
+                order += 1
+                blocks.append({
+                    "block_id": f"p{page_number:04d}-b{index + 1:04d}",
+                    "page_number": page_number,
+                    "bbox": [50, 50 + index * 80, 550, 70 + index * 80],
+                    "kind": "table_caption" if index % 2 else "figure_caption",
+                    "section_path": ["Results", f"Subsection {page_number}"],
+                    "global_reading_order": order,
+                    "text": f"Table {order}: caption text that occupies the compact index budget.",
+                })
+            pages.append({
+                "page_number": page_number,
+                "width": 600,
+                "height": 800,
+                "status": "complete",
+                "blocks": blocks,
+            })
+        document = {"case_id": "synthetic-special", "page_count": 60, "status": "complete", "pages": pages}
+        index_path = TEST_WORK / f"m5-index-{uuid.uuid4().hex}.json"
+        index, _ = _index_payload(document, {"document_index_max_tokens": 4000}, index_path)
+        self.assertTrue(index["truncated"])
+        self.assertLessEqual(estimate_json_tokens(index), 4000)
+        self.assertGreater(index.get("omitted_special_block_count", 0), 0)
+        self.assertEqual(index["indexed_page_count"], len(index["pages"]))
+
     def test_generous_limit_indexes_every_page(self) -> None:
         document = self.build_document(4)
         index_path = TEST_WORK / f"m5-index-{uuid.uuid4().hex}.json"
