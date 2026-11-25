@@ -73,7 +73,7 @@
 
 ### 2.4 本机 OCR 测试资源与边界
 
-只读检查已在 `D:\ApP\paddleOCR` 发现以下模型资源：
+只读检查已在 `<PaddleOCR 模型目录>` 发现以下模型资源：
 
 - `ch_PP-OCRv4_det`：检测模型；
 - `ch_PP-OCRv4_rec`：识别模型；
@@ -88,9 +88,9 @@
 每个新的 PowerShell 进程在执行后续开发命令前，均先运行：
 
 ```powershell
-& 'C:\Users\19740\miniforge3\shell\condabin\conda-hook.ps1'
+& '<miniforge3>\shell\condabin\conda-hook.ps1'
 conda activate evidence-pdf-reader
-if ($env:CONDA_PREFIX -ne 'D:\ApP\conda\envs_dirs\evidence-pdf-reader') { throw 'Unexpected Conda environment or activation failure' }
+if ($env:CONDA_PREFIX -ne '<conda 环境目录>\evidence-pdf-reader') { throw 'Unexpected Conda environment or activation failure' }
 python -c "import os, sys; assert os.path.samefile(sys.prefix, os.environ['CONDA_PREFIX']); assert os.path.samefile(sys.executable, os.path.join(os.environ['CONDA_PREFIX'], 'python.exe')); print(sys.executable)"
 ```
 
@@ -303,7 +303,7 @@ python evidence-pdf-reader/scripts/run.py evaluate-order --document .work/m4-lay
 6. 实现 `finalize-result` 与 `validate-result` 的端到端协作，确保状态、证据、上下文限制、错误和变更记录一致。
 7. 使用明确标注的测试答案验证合并；测试答案只用于合成夹具，不包含正式案例内容。
 8. 使用隔离开发环境中已安装并通过内存 PDF 往返检查的 PyMuPDF 1.28.2 进行开发与本机增强，仓库根目录 `requirements-dev.txt` 继续固定开发依赖；默认 `python` 另行验证 Poppler 降级，两条路径共用排序和校验逻辑。开发环境和个人模型路径不得进入 Skill。
-9. OCR 保持通用适配接口。本机测试可在运行时配置完成后使用 `D:\ApP\paddleOCR` 的现有模型；若 Paddle/PaddleOCR 运行时仍不可用，则只记录配置未完成并验证 `ocr_unavailable`，不模拟 OCR 文字结果。
+9. OCR 保持通用适配接口。本机测试可在运行时配置完成后使用 `<PaddleOCR 模型目录>` 的现有模型；若 Paddle/PaddleOCR 运行时仍不可用，则只记录配置未完成并验证 `ocr_unavailable`，不模拟 OCR 文字结果。
 
 #### 验收命令
 

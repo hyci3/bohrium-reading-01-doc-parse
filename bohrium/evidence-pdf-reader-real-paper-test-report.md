@@ -6,6 +6,8 @@
 
 主路径形成五份 `success` 和一份 ResNet `partial`，Poppler 形成三份 `success`；九份最终结果均通过本地契约与来源校验。全量 `unittest` 共运行 **69 项，0 项跳过，全部通过**；包校验为 **18 个文件、0 个错误**。`valid=true` 只表示本地结果契约、来源块和覆盖检查通过，不表示全文语义、数值单元格、Host 发现或官方评测准确率已经验证。
 
+报告中的结果、页图与校验链接指向本地工作副本的 `.work/` 目录，该目录不随仓库发布；链接改为相对路径仅为保持文字可回溯，读者无法在本仓库中直接打开它们。本报告保留 2026-11-25 那次运行的原始记录；2026-11-26 缺陷修复后的回归为 78 项测试全部通过、包校验 18 个文件 / 184939 字节 / 0 错误 0 警告（见 `docs/development-plan.md` 第 11.3 节）。
+
 总代理直接查看了六篇论文的十个唯一目标页图，形成 15 条后端观察记录；共享论文的主路径观察复用同一 PDF 的 Poppler 页图，来源引文和块 ID 仍分别按各后端文档校验。页图渲染、文件存在和哈希一致均未被视为视觉复核本身。
 
 ## 最终结果与预算
@@ -14,15 +16,15 @@
 
 | 后端 | 论文 | 处理页 | 状态 | 来源数 | 当前入选块（批次；旧值） | 索引＋文本估算 | 剩余 | 结果与校验 |
 |---|---|---:|---|---:|---:|---:|---:|---|
-| pymupdf | BERT | 16 | success | 4 | 43（1 批；旧 43） | 11,948＋7,319＝19,267 | 0 | [结果](D:/code2/boer/1/.work/main-agent-suite-20261124/primary-runs-margin-recheck-v5b/bert/output/result.json)／[有效](D:/code2/boer/1/.work/main-agent-suite-20261124/primary-runs-margin-recheck-v5b/bert/final-result-validation.json) |
-| pymupdf | ViT | 22 | success | 4 | 28（1 批；旧 18） | 11,872＋5,767＝17,639 | 0 | [结果](D:/code2/boer/1/.work/main-agent-suite-20261124/primary-runs-margin-recheck-v5b/vit/output/result.json)／[有效](D:/code2/boer/1/.work/main-agent-suite-20261124/primary-runs-margin-recheck-v5b/vit/final-result-validation.json) |
-| pymupdf | DETR | 26 | success | 4 | 13（1 批；旧 13） | 11,957＋2,761＝14,718 | 0 | [结果](D:/code2/boer/1/.work/main-agent-suite-20261124/primary-runs-margin-recheck-v5b/detr/output/result.json)／[有效](D:/code2/boer/1/.work/main-agent-suite-20261124/primary-runs-margin-recheck-v5b/detr/final-result-validation.json) |
-| pymupdf | LoRA | 26 | success | 5 | 37（1 批；旧 37） | 11,831＋7,047＝18,878 | 0 | [结果](D:/code2/boer/1/.work/main-agent-suite-20261124/primary-runs-margin-recheck-v5b/lora/output/result.json)／[有效](D:/code2/boer/1/.work/main-agent-suite-20261124/primary-runs-margin-recheck-v5b/lora/final-result-validation.json) |
-| pymupdf | Attention Is All You Need | 15 | success | 4 | 36（1 批；旧 36） | 11,358＋5,721＝17,079 | 0 | [结果](D:/code2/boer/1/.work/main-agent-suite-20261124/primary-runs-margin-recheck-v5b/attention/output/result.json)／[有效](D:/code2/boer/1/.work/main-agent-suite-20261124/primary-runs-margin-recheck-v5b/attention/final-result-validation.json) |
-| pymupdf | ResNet | 12 | partial | 4 | 255（2 批；旧 247） | 11,967＋28,282＝40,249 | 0 | [结果](D:/code2/boer/1/.work/main-agent-suite-20261124/primary-runs-margin-recheck-v5b/resnet/output/result.json)／[有效](D:/code2/boer/1/.work/main-agent-suite-20261124/primary-runs-margin-recheck-v5b/resnet/final-result-validation.json) |
-| poppler | BERT | 16 | success | 12 | 82（1 批；旧 81） | 3,795＋12,841＝16,636 | 0 | [结果](D:/code2/boer/1/.work/main-agent-suite-20261124/poppler-runs-repair-v7/bert/output/result.json)／[有效](D:/code2/boer/1/.work/main-agent-suite-20261124/poppler-runs-repair-v7/bert/result-validation.json) |
-| poppler | DETR | 26 | success | 8 | 48（1 批；旧 48） | 4,848＋7,849＝12,697 | 0 | [结果](D:/code2/boer/1/.work/main-agent-suite-20261124/poppler-runs-repair-v7/detr/output/result.json)／[有效](D:/code2/boer/1/.work/main-agent-suite-20261124/poppler-runs-repair-v7/detr/result-validation.json) |
-| poppler | LoRA | 26 | success | 8 | 48（1 批；旧 45） | 9,060＋12,833＝21,893 | 0 | [结果](D:/code2/boer/1/.work/main-agent-suite-20261124/poppler-runs-repair-v7/lora/output/result.json)／[有效](D:/code2/boer/1/.work/main-agent-suite-20261124/poppler-runs-repair-v7/lora/result-validation.json) |
+| pymupdf | BERT | 16 | success | 4 | 43（1 批；旧 43） | 11,948＋7,319＝19,267 | 0 | [结果](.work/main-agent-suite-20261124/primary-runs-margin-recheck-v5b/bert/output/result.json)／[有效](.work/main-agent-suite-20261124/primary-runs-margin-recheck-v5b/bert/final-result-validation.json) |
+| pymupdf | ViT | 22 | success | 4 | 28（1 批；旧 18） | 11,872＋5,767＝17,639 | 0 | [结果](.work/main-agent-suite-20261124/primary-runs-margin-recheck-v5b/vit/output/result.json)／[有效](.work/main-agent-suite-20261124/primary-runs-margin-recheck-v5b/vit/final-result-validation.json) |
+| pymupdf | DETR | 26 | success | 4 | 13（1 批；旧 13） | 11,957＋2,761＝14,718 | 0 | [结果](.work/main-agent-suite-20261124/primary-runs-margin-recheck-v5b/detr/output/result.json)／[有效](.work/main-agent-suite-20261124/primary-runs-margin-recheck-v5b/detr/final-result-validation.json) |
+| pymupdf | LoRA | 26 | success | 5 | 37（1 批；旧 37） | 11,831＋7,047＝18,878 | 0 | [结果](.work/main-agent-suite-20261124/primary-runs-margin-recheck-v5b/lora/output/result.json)／[有效](.work/main-agent-suite-20261124/primary-runs-margin-recheck-v5b/lora/final-result-validation.json) |
+| pymupdf | Attention Is All You Need | 15 | success | 4 | 36（1 批；旧 36） | 11,358＋5,721＝17,079 | 0 | [结果](.work/main-agent-suite-20261124/primary-runs-margin-recheck-v5b/attention/output/result.json)／[有效](.work/main-agent-suite-20261124/primary-runs-margin-recheck-v5b/attention/final-result-validation.json) |
+| pymupdf | ResNet | 12 | partial | 4 | 255（2 批；旧 247） | 11,967＋28,282＝40,249 | 0 | [结果](.work/main-agent-suite-20261124/primary-runs-margin-recheck-v5b/resnet/output/result.json)／[有效](.work/main-agent-suite-20261124/primary-runs-margin-recheck-v5b/resnet/final-result-validation.json) |
+| poppler | BERT | 16 | success | 12 | 82（1 批；旧 81） | 3,795＋12,841＝16,636 | 0 | [结果](.work/main-agent-suite-20261124/poppler-runs-repair-v7/bert/output/result.json)／[有效](.work/main-agent-suite-20261124/poppler-runs-repair-v7/bert/result-validation.json) |
+| poppler | DETR | 26 | success | 8 | 48（1 批；旧 48） | 4,848＋7,849＝12,697 | 0 | [结果](.work/main-agent-suite-20261124/poppler-runs-repair-v7/detr/output/result.json)／[有效](.work/main-agent-suite-20261124/poppler-runs-repair-v7/detr/result-validation.json) |
+| poppler | LoRA | 26 | success | 8 | 48（1 批；旧 45） | 9,060＋12,833＝21,893 | 0 | [结果](.work/main-agent-suite-20261124/poppler-runs-repair-v7/lora/output/result.json)／[有效](.work/main-agent-suite-20261124/poppler-runs-repair-v7/lora/result-validation.json) |
 
 所有目标续读范围均以 `status=complete` 且 `remaining_blocks=0` 结束；末尾非空 `next_cursor` 未被误判为未完成。每批新证据估算不超过 24,000，紧凑索引不超过 12,000。图像成本未实测，自动生成但未被总代理读取的风险页图不被计作已复核。
 
@@ -32,7 +34,7 @@
 
 ### BERT
 
-状态为 `success`。图注位于第 5 页、块 `p0005-b0014`；表题位于第 6 页、块 `p0006-b0002`；原始表头块为 `p0006-b0001`。[最终结果](D:/code2/boer/1/.work/main-agent-suite-20261124/primary-runs-margin-recheck-v5b/bert/output/result.json)；页图：[第 5 页图](D:/code2/boer/1/.work/main-agent-suite-20261124/manual-page-review-v7/bert/page-0005.png)、[第 6 页图](D:/code2/boer/1/.work/main-agent-suite-20261124/manual-page-review-v7/bert/page-0006.png)。
+状态为 `success`。图注位于第 5 页、块 `p0005-b0014`；表题位于第 6 页、块 `p0006-b0002`；原始表头块为 `p0006-b0001`。[最终结果](.work/main-agent-suite-20261124/primary-runs-margin-recheck-v5b/bert/output/result.json)；页图：[第 5 页图](.work/main-agent-suite-20261124/manual-page-review-v7/bert/page-0005.png)、[第 6 页图](.work/main-agent-suite-20261124/manual-page-review-v7/bert/page-0006.png)。
 
 完整图注原文：
 
@@ -48,7 +50,7 @@ tion embeddings and the position embeddings.
 
 ### ViT
 
-状态为 `success`。图注位于第 6 页、块 `p0006-b0023`；表题位于第 6 页、块 `p0006-b0005`；原始表头块为 `p0006-b0002`。[最终结果](D:/code2/boer/1/.work/main-agent-suite-20261124/primary-runs-margin-recheck-v5b/vit/output/result.json)；页图：[第 6 页图](D:/code2/boer/1/.work/main-agent-suite-20261124/manual-page-review-primary-v5b/vit/page-0006.png)。
+状态为 `success`。图注位于第 6 页、块 `p0006-b0023`；表题位于第 6 页、块 `p0006-b0005`；原始表头块为 `p0006-b0002`。[最终结果](.work/main-agent-suite-20261124/primary-runs-margin-recheck-v5b/vit/output/result.json)；页图：[第 6 页图](.work/main-agent-suite-20261124/manual-page-review-primary-v5b/vit/page-0006.png)。
 
 完整图注原文：
 
@@ -63,7 +65,7 @@ Figure 2: Breakdown of VTAB performance in Natural, Specialized, and Structured 
 
 ### DETR
 
-状态为 `success`。图注位于第 13 页、块 `p0013-b0004`；表题位于第 13 页、块 `p0013-b0005`；原始表头块为 `p0013-b0007`。[最终结果](D:/code2/boer/1/.work/main-agent-suite-20261124/primary-runs-margin-recheck-v5b/detr/output/result.json)；页图：[第 13 页图](D:/code2/boer/1/.work/main-agent-suite-20261124/manual-page-review-v7/detr/page-0013.png)。
+状态为 `success`。图注位于第 13 页、块 `p0013-b0004`；表题位于第 13 页、块 `p0013-b0005`；原始表头块为 `p0013-b0007`。[最终结果](.work/main-agent-suite-20261124/primary-runs-margin-recheck-v5b/detr/output/result.json)；页图：[第 13 页图](.work/main-agent-suite-20261124/manual-page-review-v7/detr/page-0013.png)。
 
 完整图注原文：
 
@@ -81,7 +83,7 @@ such as legs and heads. Best viewed in color.
 
 ### LoRA
 
-状态为 `success`。图注位于第 1 页、块 `p0001-b0018`；表题位于第 6 页、块 `p0006-b0012`；原始表头块为 `p0006-b0002`、`p0006-b0003`。[最终结果](D:/code2/boer/1/.work/main-agent-suite-20261124/primary-runs-margin-recheck-v5b/lora/output/result.json)；页图：[第 1 页图](D:/code2/boer/1/.work/main-agent-suite-20261124/manual-page-review-v7/lora/page-0001.png)、[第 6 页图](D:/code2/boer/1/.work/main-agent-suite-20261124/manual-page-review-v7/lora/page-0006.png)。
+状态为 `success`。图注位于第 1 页、块 `p0001-b0018`；表题位于第 6 页、块 `p0006-b0012`；原始表头块为 `p0006-b0002`、`p0006-b0003`。[最终结果](.work/main-agent-suite-20261124/primary-runs-margin-recheck-v5b/lora/output/result.json)；页图：[第 1 页图](.work/main-agent-suite-20261124/manual-page-review-v7/lora/page-0001.png)、[第 6 页图](.work/main-agent-suite-20261124/manual-page-review-v7/lora/page-0006.png)。
 
 完整图注原文：
 
@@ -97,7 +99,7 @@ tion. We only train A and B.
 
 ### Attention Is All You Need
 
-状态为 `success`。图注位于第 4 页、块 `p0004-b0005`；表题位于第 9 页、块 `p0009-b0001`；原始表头块为 `p0009-b0007`。[最终结果](D:/code2/boer/1/.work/main-agent-suite-20261124/primary-runs-margin-recheck-v5b/attention/output/result.json)；页图：[第 4 页图](D:/code2/boer/1/.work/main-agent-suite-20261124/manual-page-review-primary-v5b/attention/page-0004.png)、[第 9 页图](D:/code2/boer/1/.work/main-agent-suite-20261124/manual-page-review-primary-v5b/attention/page-0009.png)。
+状态为 `success`。图注位于第 4 页、块 `p0004-b0005`；表题位于第 9 页、块 `p0009-b0001`；原始表头块为 `p0009-b0007`。[最终结果](.work/main-agent-suite-20261124/primary-runs-margin-recheck-v5b/attention/output/result.json)；页图：[第 4 页图](.work/main-agent-suite-20261124/manual-page-review-primary-v5b/attention/page-0004.png)、[第 9 页图](.work/main-agent-suite-20261124/manual-page-review-primary-v5b/attention/page-0009.png)。
 
 完整图注原文：
 
@@ -113,7 +115,7 @@ attention layers running in parallel.
 
 ### ResNet
 
-状态为 `partial`。图注位于第 4 页、块 `p0004-b0116`；表题位于第 5 页、块 `p0005-b0099`；原始表头块为 `p0005-b0002`。[最终结果](D:/code2/boer/1/.work/main-agent-suite-20261124/primary-runs-margin-recheck-v5b/resnet/output/result.json)；页图：[第 4 页图](D:/code2/boer/1/.work/main-agent-suite-20261124/manual-page-review-primary-v5b/resnet/page-0004.png)、[第 5 页图](D:/code2/boer/1/.work/main-agent-suite-20261124/manual-page-review-primary-v5b/resnet/page-0005.png)。
+状态为 `partial`。图注位于第 4 页、块 `p0004-b0116`；表题位于第 5 页、块 `p0005-b0099`；原始表头块为 `p0005-b0002`。[最终结果](.work/main-agent-suite-20261124/primary-runs-margin-recheck-v5b/resnet/output/result.json)；页图：[第 4 页图](.work/main-agent-suite-20261124/manual-page-review-primary-v5b/resnet/page-0004.png)、[第 5 页图](.work/main-agent-suite-20261124/manual-page-review-primary-v5b/resnet/page-0005.png)。
 
 完整图注原文：
 
@@ -137,9 +139,9 @@ more details and other variants.
 
 | 论文 | 图注逐字 | 表题逐字 | 有序词元与标点 | 控制码点计数 | 最终结果 |
 |---|---|---|---|---|---|
-| BERT | 一致 | 不同 | 图／表均通过 | 未检出 | [结果](D:/code2/boer/1/.work/main-agent-suite-20261124/poppler-runs-repair-v7/bert/output/result.json) |
-| DETR | 不同 | 不同 | 图／表均通过 | U+0001×1、U+0012×1、U+0013×1、U+001C×1 | [结果](D:/code2/boer/1/.work/main-agent-suite-20261124/poppler-runs-repair-v7/detr/output/result.json) |
-| LoRA | 一致 | 不同 | 图／表均通过 | U+0001×1、U+0010×1、U+0011×1、U+001C×3 | [结果](D:/code2/boer/1/.work/main-agent-suite-20261124/poppler-runs-repair-v7/lora/output/result.json) |
+| BERT | 一致 | 不同 | 图／表均通过 | 未检出 | [结果](.work/main-agent-suite-20261124/poppler-runs-repair-v7/bert/output/result.json) |
+| DETR | 不同 | 不同 | 图／表均通过 | U+0001×1、U+0012×1、U+0013×1、U+001C×1 | [结果](.work/main-agent-suite-20261124/poppler-runs-repair-v7/detr/output/result.json) |
+| LoRA | 一致 | 不同 | 图／表均通过 | U+0001×1、U+0010×1、U+0011×1、U+001C×3 | [结果](.work/main-agent-suite-20261124/poppler-runs-repair-v7/lora/output/result.json) |
 
 Poppler 路径不提供已验证的自动二维表格结构。BERT 的 `Average` 原始块同时保留下方短横线和后续数值，但答案只将 `Average` 列为表头标签，未把这些数值提升为已恢复单元格。DETR 的 `AP50` 保留几何拼接前后文本和原词 bbox；LoRA 的模型名下标、紧随标点及浮动图注拆分同样保留审计事件。控制码点的页码、原始 XML 行列和源 XML SHA-256 见结构化 JSON；这些码点不是 OCR 字形结论。
 
@@ -161,28 +163,28 @@ Poppler 路径不提供已验证的自动二维表格结构。BERT 的 `Average`
 | poppler:detr | 0／0／0 | 124 | footer→body 61；header→body 13；heading→body 1 | 8 |
 | poppler:lora | 0／0／0 | 250 | footer→body 78；heading→body 1 | 12 |
 
-ViT 旧结果在新文档上的失败被保留为 `sources[0] quote does not match source block text`。严格物理匹配后来源 ID 变化为 `p0006-b0013`→`p0006-b0023`；`p0006-b0007`→`p0006-b0010`，其余目标来源 ID 不变；Figure 2 的 raw_id 保持为 `r0021`，原文、bbox、原始类型、rows 和图像标志均匹配。迁移后来源及最终结果分别通过校验。[旧结果失败报告](D:/code2/boer/1/.work/main-agent-suite-20261124/primary-runs-margin-recheck-v5b/vit/previous-result-current-document-validation.json)；[完整 raw_id 影响记录](D:/code2/boer/1/.work/main-agent-suite-20261124/analysis/final-fix-impact-v5b-v7.json)。
+ViT 旧结果在新文档上的失败被保留为 `sources[0] quote does not match source block text`。严格物理匹配后来源 ID 变化为 `p0006-b0013`→`p0006-b0023`；`p0006-b0007`→`p0006-b0010`，其余目标来源 ID 不变；Figure 2 的 raw_id 保持为 `r0021`，原文、bbox、原始类型、rows 和图像标志均匹配。迁移后来源及最终结果分别通过校验。[旧结果失败报告](.work/main-agent-suite-20261124/primary-runs-margin-recheck-v5b/vit/previous-result-current-document-validation.json)；[完整 raw_id 影响记录](.work/main-agent-suite-20261124/analysis/final-fix-impact-v5b-v7.json)。
 
 该对照只证明物理来源被保留和当前引用被重新绑定，不证明全篇阅读顺序已经具备人工金标准。此前对照已定位 DETR 第 2、12 页局部顺序变化；最终逐页 raw_id 顺序差异清单见结构化 JSON。
 
 ## 同版本重复性
 
-当前代码对同一 BERT PDF 再提取一次，逐页有序块 JSON、页面 layout 和 layout_analysis 均一致，变化块数为 0；第 3、5、15、16 页的四张自动渲染图 SHA-256 均一致。两次产物级 `document_sha256` 分别保存，未将该项检查表述为所有文件字节或产物哈希相同。[重复性记录](D:/code2/boer/1/.work/main-agent-suite-20261124/analysis/bert-current-repeatability-v5b.json)。
+当前代码对同一 BERT PDF 再提取一次，逐页有序块 JSON、页面 layout 和 layout_analysis 均一致，变化块数为 0；第 3、5、15、16 页的四张自动渲染图 SHA-256 均一致。两次产物级 `document_sha256` 分别保存，未将该项检查表述为所有文件字节或产物哈希相同。[重复性记录](.work/main-agent-suite-20261124/analysis/bert-current-repeatability-v5b.json)。
 
 ## 全量测试与包校验
 
 - `python -m unittest discover -s tests -v`：**Ran 69 tests in 12.158s；OK**，0 项跳过。首次 `python -m pytest tests -q` 因环境未安装 pytest 而未执行测试，随后使用标准库完整发现同一 `tests/` 目录，没有筛选测试或放宽断言。
-- `validate-package`：**18 个文件、182,905 bytes、0 个错误、0 个警告**。[包校验报告](D:/code2/boer/1/bohrium/package-validation.json)。
-- 显式视觉观察及其哈希、九份结果、来源迁移、后端差异、预算和原始 PDF SHA-256 均已纳入 [结构化报告](D:/code2/boer/1/bohrium/evidence-pdf-reader-real-paper-test-report.json)。
+- `validate-package`：**18 个文件、182,905 bytes、0 个错误、0 个警告**。[包校验报告](bohrium/package-validation.json)。
+- 显式视觉观察及其哈希、九份结果、来源迁移、后端差异、预算和原始 PDF SHA-256 均已纳入 [结构化报告](bohrium/evidence-pdf-reader-real-paper-test-report.json)。
 
 ## 输入 PDF 与完整哈希
 
-- BERT：[源 PDF](D:/code2/boer/1/.work/main-agent-suite-20261124/papers/bert.pdf)；SHA-256 `5692a5514787a8c6727b4ff3b726a3385798bc68e12138d1d4af83947e2acf6e`。
-- ViT：[源 PDF](D:/code2/boer/1/.work/main-agent-suite-20261124/papers/vit.pdf)；SHA-256 `8ce7b83971a14508ca711a27c875c9b6914c4f6767cf3150fb1ca6c07aa056d6`。
-- DETR：[源 PDF](D:/code2/boer/1/.work/main-agent-suite-20261124/papers/detr.pdf)；SHA-256 `d4b846bd44896e1d21527f48eddc422c263c9a4f8a3fa4be249750956882698d`。
-- LoRA：[源 PDF](D:/code2/boer/1/.work/main-agent-suite-20261124/papers/lora.pdf)；SHA-256 `e9a0d3128767db616085dc0f4e6e455e672e89af823e8ed1282793682787395a`。
-- Attention Is All You Need：[源 PDF](D:/code2/boer/1/.work/fixtures/real/attention.pdf)；SHA-256 `bdfaa68d8984f0dc02beaca527b76f207d99b666d31d1da728ee0728182df697`。
-- ResNet：[源 PDF](D:/code2/boer/1/.work/fixtures/real/resnet.pdf)；SHA-256 `1e0651b6810ecba34a3dbc5b5b0209226f889004607c1f203540a48d64e5a93a`。
+- BERT：[源 PDF](.work/main-agent-suite-20261124/papers/bert.pdf)；SHA-256 `5692a5514787a8c6727b4ff3b726a3385798bc68e12138d1d4af83947e2acf6e`。
+- ViT：[源 PDF](.work/main-agent-suite-20261124/papers/vit.pdf)；SHA-256 `8ce7b83971a14508ca711a27c875c9b6914c4f6767cf3150fb1ca6c07aa056d6`。
+- DETR：[源 PDF](.work/main-agent-suite-20261124/papers/detr.pdf)；SHA-256 `d4b846bd44896e1d21527f48eddc422c263c9a4f8a3fa4be249750956882698d`。
+- LoRA：[源 PDF](.work/main-agent-suite-20261124/papers/lora.pdf)；SHA-256 `e9a0d3128767db616085dc0f4e6e455e672e89af823e8ed1282793682787395a`。
+- Attention Is All You Need：[源 PDF](.work/fixtures/real/attention.pdf)；SHA-256 `bdfaa68d8984f0dc02beaca527b76f207d99b666d31d1da728ee0728182df697`。
+- ResNet：[源 PDF](.work/fixtures/real/resnet.pdf)；SHA-256 `1e0651b6810ecba34a3dbc5b5b0209226f889004607c1f203540a48d64e5a93a`。
 
 ## 保留的限制与部分结果
 
