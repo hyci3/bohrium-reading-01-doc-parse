@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from .case_io import atomic_write_json, error_record
+from .poppler_xml import controls_as_dict, parse_poppler_bbox
 
 
 def local_name(tag: str) -> str:
@@ -159,9 +160,12 @@ def probe_with_poppler(path: Path, capabilities: dict[str, Any], work_dir: Path)
     if code != 0 or not bbox_path.is_file():
         return _failure_record(path, "poppler", "unreadable_pdf", f"pdftotext failed with code {code}: {log[-2000:]}")
     try:
-        root = ET.parse(bbox_path).getroot()
-    except ET.ParseError as exc:
+        root, control_recovery = parse_poppler_bbox(bbox_path)
+    except (ET.ParseError, UnicodeError, LookupError, ValueError) as exc:
         return _failure_record(path, "poppler", "unreadable_pdf", f"Invalid bbox XML: {exc}")
+    if control_recovery:
+        properties["xml_recovery"] = control_recovery
+    control_warnings = controls_as_dict(control_recovery)
     pages: list[dict[str, Any]] = []
     ocr_available = capabilities.get("ocr", {}).get("available")
     for index, page in enumerate(element for element in root.iter() if local_name(element.tag) == "page"):
@@ -177,6 +181,7 @@ def probe_with_poppler(path: Path, capabilities: dict[str, Any], work_dir: Path)
             "rotation": 0,
             "word_count": count,
             "image_count": None,
+            "warnings": [warning for warning in control_warnings if warning["page_number"] == index + 1],
         })
     if not pages:
         return _failure_record(path, "poppler", "unreadable_pdf", "No pages found in Poppler bbox output")

@@ -59,20 +59,37 @@ def _blocks(document: dict[str, Any], main_only: bool = True) -> list[dict[str, 
             if main_only and block.get("kind") in {"header", "footer"}:
                 continue
             sequence += 1
-            result.append({
+            primary_text = block.get("source_text", block.get("text", ""))
+            entry = {
                 "block_id": block.get("block_id"),
                 "page_number": page.get("page_number"),
                 "kind": block.get("kind", "unknown"),
                 "section_path": block.get("section_path", []),
-                "text": block.get("text", ""),
+                # Preserve physical line breaks inside a PDF block; indexes use whitespace-normalized previews.
+                "text": primary_text,
                 "global_reading_order": block.get("global_reading_order", sequence),
                 "_sequence": sequence,
-            })
+            }
+            if block.get("source_text_adjustments"):
+                entry["source_text_before_adjustments"] = block.get("source_text_before_adjustments")
+                entry["source_text_adjustments"] = list(block["source_text_adjustments"])
+            if entry["kind"] == "table":
+                # Automatic table rows are evidence candidates, not verified semantic row/cell ownership.
+                entry["rows"] = block.get("rows", [])
+                entry["table_warning"] = block.get("table_warning", "Unverified extractor table candidate; compare with the source page before assigning row or column ownership")
+                entry["table_candidate"] = True
+                entry["requires_visual_review"] = True
+                if block.get("layout_barrier_excluded"):
+                    entry["layout_barrier_excluded"] = True
+            if block.get("warnings"):
+                # Layout and recovery warnings must travel with the evidence, not only on disk.
+                entry["warnings"] = list(block["warnings"])
+            result.append(entry)
     return sorted(result, key=lambda item: (item["global_reading_order"], item["_sequence"]))
 
 
 def _preview(block: dict[str, Any]) -> dict[str, Any]:
-    return {
+    preview = {
         "block_id": block["block_id"],
         "page_number": block["page_number"],
         "kind": block["kind"],
@@ -80,6 +97,22 @@ def _preview(block: dict[str, Any]) -> dict[str, Any]:
         "text_preview": " ".join(block.get("text", "").split())[:100],
         "text_sha256": hashlib.sha256(block.get("text", "").encode("utf-8")).hexdigest(),
     }
+    if block.get("warnings"):
+        preview["warning_count"] = len(block["warnings"])
+    if block.get("source_text_adjustments"):
+        preview["source_text_adjustment_count"] = len(block["source_text_adjustments"])
+    if block["kind"] == "table":
+        rows = block.get("rows", [])
+        rows = rows if isinstance(rows, list) else []
+        preview.update({
+            "row_count": len(rows),
+            "max_column_count": max((len(row) for row in rows if isinstance(row, list)), default=0),
+            "table_warning": block.get("table_warning"),
+            "table_candidate": True,
+            "requires_visual_review": True,
+        })
+        # Keep full row evidence for targeted selections, never in the compact navigation index.
+    return preview
 
 
 def _index_payload(document: dict[str, Any], profile: dict[str, int], index_path: Path) -> tuple[dict[str, Any], Path]:
@@ -105,7 +138,7 @@ def _index_payload(document: dict[str, Any], profile: dict[str, int], index_path
             "status": page.get("status"),
             "block_count": len(page_blocks),
             "kinds": kinds,
-            "risk": bool(page.get("warnings")),
+            "risk": bool(page.get("warnings")) or any(block.get("warnings") for block in page_blocks),
         })
     index: dict[str, Any] = {
         "schema_version": "1.0",
@@ -124,6 +157,9 @@ def _index_payload(document: dict[str, Any], profile: dict[str, int], index_path
         "estimation_method": {"name": "mixed_characters_div3", "safety_factor": TEXT_SAFETY_FACTOR, "error": "unknown"},
         "truncated": False,
     }
+    if document.get("extraction_recovery"):
+        index["extraction_recovery"] = document["extraction_recovery"]
+        index["recovery_warning"] = "Only illegal XML-1.0 C0 controls were temporarily substituted and restored; their printed glyph meanings remain unverified."
     limit = int(profile["document_index_max_tokens"])
     omitted_special = 0
     omitted_pages = 0
@@ -339,6 +375,11 @@ def _record_segment(
     return segment
 
 
+def _cursor_scope(query: str | None, pages: list[int] | None, sections: list[str] | None, block_ids: list[str] | None) -> dict[str, Any]:
+    normalized_lists = [sorted(set(values)) if values else None for values in (pages, sections, block_ids)]
+    return {"query": query.strip() if query else None, "pages": normalized_lists[0], "sections": normalized_lists[1], "block_ids": normalized_lists[2]}
+
+
 def select_context_command(
     plan_path: str | Path,
     document_path: str | Path,
@@ -382,6 +423,18 @@ def select_context_command(
         _record_usage(state, usage_event)
     if state["case_id"] != document.get("case_id") or state["case_id"] != plan.get("case_id"):
         raise ValueError("Budget state case_id does not match case-plan and document")
+    if cursor is not None and not full_document and "filters" in state.get("last_selection", {}):
+        previous = state["last_selection"]["filters"]
+        if not isinstance(previous, dict):
+            raise ValueError("Previous selection filters are not a valid JSON object")
+        query = query if query is not None else previous.get("query")
+        pages = pages if pages is not None else previous.get("pages")
+        sections = sections if sections is not None else previous.get("sections")
+        block_ids = block_ids if block_ids is not None else previous.get("block_ids")
+        current_scope = _cursor_scope(query, pages, sections, block_ids)
+        previous_scope = _cursor_scope(previous.get("query"), previous.get("pages"), previous.get("sections"), previous.get("block_ids"))
+        if current_scope != previous_scope:
+            raise ValueError("Cursor selection scope changed; keep query/page/section/block filters identical or use a separate budget state and a cursor valid for the new scope")
     index_tokens_new = 0 if state["index"]["counted"] else index_tokens
     state["source_injection_used_tokens"] += index_tokens_new
     state["index"].update({"estimated_tokens": index_tokens, "counted": True, "document_sha256": current_hash})
@@ -516,7 +569,7 @@ def select_context_command(
         atomic_write_json(output, selection)
     if full_document and not remaining and not code:
         state["full_document_completed"] = True
-    state["last_selection"] = {"path": str(Path(output).resolve()), "status": selection["status"], "next_cursor": next_cursor, "remaining_blocks": remaining}
+    state["last_selection"] = {"path": str(Path(output).resolve()), "status": selection["status"], "next_cursor": next_cursor, "remaining_blocks": remaining, "mode": selection["mode"], "filters": dict(selection["filters"])}
     atomic_write_json(state_path, state)
     _update_early_result(plan, selection)
     print(

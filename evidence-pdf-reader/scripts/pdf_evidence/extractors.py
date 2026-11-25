@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import xml.etree.ElementTree as ET
 from pathlib import Path
+from math import isfinite
+from statistics import median
 from typing import Any
 
 from .case_io import atomic_write_json, error_record, read_json
 from .probe import local_name, run_to_log
+from .poppler_xml import has_illegal_xml_control, page_control_warning, parse_poppler_bbox
 from .reading_order import order_pages
 
 
@@ -18,7 +21,7 @@ def _bbox(items: list[dict[str, Any]]) -> list[float]:
     ]
 
 
-def _pymupdf_page(page: Any) -> list[dict[str, Any]]:
+def _pymupdf_page(page: Any, table_diagnostics: list[str] | None = None) -> list[dict[str, Any]]:
     blocks: list[dict[str, Any]] = []
     data = page.get_text("dict")
     for block in data.get("blocks", []):
@@ -63,6 +66,7 @@ def _pymupdf_page(page: Any) -> list[dict[str, Any]]:
                 "font_size_max": None,
                 "font_bold": False,
             })
+    table_candidates = 0
     try:
         finder = page.find_tables()
         for table in getattr(finder, "tables", []):
@@ -78,10 +82,16 @@ def _pymupdf_page(page: Any) -> list[dict[str, Any]]:
                 "raw_kind": "body",
                 "rows": rows,
                 "table_warning": "Table structure is extractor output and still requires source verification for merged cells",
+                "table_candidate": True,
+                "requires_visual_review": True,
             })
-    except Exception:
-        # Table recovery is opportunistic; text and image evidence remain the fallback.
-        pass
+            table_candidates += 1
+        if table_diagnostics is not None and table_candidates:
+            table_diagnostics.append(f"table_candidates_unverified: {table_candidates} automatic table regions require source-page review")
+    except Exception as exc:
+        # Table recovery is opportunistic; preserve its failure reason and original text/image evidence.
+        if table_diagnostics is not None:
+            table_diagnostics.append(f"table_recovery_unavailable: {type(exc).__name__}: {str(exc)[:300]}")
     return blocks
 
 
@@ -96,42 +106,263 @@ def _element_bbox(element: ET.Element) -> list[float] | None:
     return values
 
 
+def _join_line_words(words: list[ET.Element]) -> tuple[str, list[dict[str, Any]]]:
+    """Join only geometrically supported subscripts and immediately following punctuation."""
+    fragments: list[str] = []
+    adjustments: list[dict[str, Any]] = []
+    previous_was_subscript = False
+    for index, word in enumerate(words):
+        text = word.text or ""
+        joined = False
+        if index:
+            previous = words[index - 1]
+            left_text = previous.text or ""
+            try:
+                left_bbox = _element_bbox(previous)
+                right_bbox = _element_bbox(word)
+                left_height = left_bbox[3] - left_bbox[1] if left_bbox else 0.0
+                right_height = right_bbox[3] - right_bbox[1] if right_bbox else 0.0
+                gap = right_bbox[0] - left_bbox[2] if left_bbox and right_bbox else 1.0
+                touching = -0.05 <= gap <= 0.05
+                lower = right_bbox[1] >= left_bbox[1] + left_height * 0.20
+                bounded_bottom = right_bbox[3] <= left_bbox[3] + left_height * 0.25
+                joins_subscript = (
+                    touching and left_height > 0 and 0 < right_height <= left_height * 0.75
+                    and lower and bounded_bottom and bool(left_text) and left_text[-1].isalpha()
+                    and text.isascii() and (text.isdigit() or text.isalpha())
+                )
+                if joins_subscript:
+                    fragments[-1] += text
+                    adjustments.append({
+                        "kind": "numeric_subscript_geometry" if text.isdigit() else "alphabetic_subscript_geometry",
+                        "raw_word_texts": [left_text, text],
+                        "raw_word_bboxes": [left_bbox, right_bbox],
+                        "gap_points": round(gap, 6),
+                        "scope": "same_poppler_xml_line",
+                    })
+                    previous_was_subscript = True
+                    joined = True
+                elif previous_was_subscript and text in {",", ".", ";", ":", "!", "?", ")", "]", "}"} and 0 <= gap <= min(0.75, left_height * 0.10):
+                    fragments[-1] += text
+                    adjustments.append({
+                        "kind": "post_subscript_punctuation_geometry",
+                        "raw_word_texts": [left_text, text],
+                        "raw_word_bboxes": [left_bbox, right_bbox],
+                        "gap_points": round(gap, 6),
+                        "threshold_points": round(min(0.75, left_height * 0.10), 6),
+                        "scope": "same_poppler_xml_line_immediately_after_subscript",
+                        "requires_visual_review": True,
+                    })
+                    previous_was_subscript = False
+                    joined = True
+                else:
+                    previous_was_subscript = False
+            except (KeyError, ValueError, TypeError):
+                previous_was_subscript = False
+        if not joined:
+            fragments.append(text)
+    return " ".join(fragments), adjustments
+
+
+def _wrapped_text_partition(
+    element: ET.Element,
+    page_width: float | None,
+    source_block_index: int,
+) -> tuple[list[list[ET.Element]], list[list[ET.Element]], dict[str, Any]] | None:
+    """Split only a conservative two-line floating-text band inside one XML block.
+
+    Geometry governs the partition. Word counts and letter proportions reject weak
+    prose-span candidates; they do not establish semantic rows, cells, or captions.
+    """
+    line_nodes = [item for item in element.iter() if local_name(item.tag) == "line"]
+    all_words = [item for item in element.iter() if local_name(item.tag) == "word"]
+    if len(line_nodes) < 3 or len(all_words) < 40 or page_width is None or page_width <= 0:
+        return None
+    try:
+        parent_bbox = _element_bbox(element)
+        if parent_bbox is None or not all(isfinite(value) for value in parent_bbox) or parent_bbox[2] - parent_bbox[0] < page_width * 0.55:
+            return None
+        prose_count = sum(any(character.isalpha() for character in (word.text or "")) for word in all_words)
+        if prose_count < len(all_words) * 0.75:
+            return None
+        lines: list[list[tuple[ET.Element, list[float]]]] = []
+        ordinary_gaps: list[float] = []
+        for line in line_nodes:
+            entries: list[tuple[ET.Element, list[float]]] = []
+            for word in (item for item in line.iter() if local_name(item.tag) == "word"):
+                coordinates = _element_bbox(word)
+                if coordinates is None or not all(isfinite(value) for value in coordinates) or coordinates[0] > coordinates[2] or coordinates[1] >= coordinates[3]:
+                    return None
+                entries.append((word, coordinates))
+            lines.append(entries)
+            ordinary_gaps.extend(right[1][0] - left[1][2] for left, right in zip(entries, entries[1:]) if 0 <= right[1][0] - left[1][2] < 8)
+        ordinary_median = median(ordinary_gaps) if ordinary_gaps else None
+        threshold = max(8.0, 2.5 * ordinary_median) if ordinary_median is not None else 8.0
+        split_rows = []
+        for line_index, entries in enumerate(lines):
+            if any(coordinates[0] < parent_bbox[0] - 2 or coordinates[2] > parent_bbox[2] + 2 for _, coordinates in entries):
+                return None
+            possible = []
+            for index, gap in enumerate(right[1][0] - left[1][2] for left, right in zip(entries, entries[1:])):
+                if gap >= threshold and index >= 2 and len(entries) - index - 1 >= 3:
+                    possible.append((index, gap))
+            if not possible:
+                continue
+            index, gap = max(possible, key=lambda item: item[1])
+            left = entries[:index + 1]
+            right = entries[index + 1:]
+            split_rows.append({
+                "line_index": line_index,
+                "left": [word for word, _ in left],
+                "right": [word for word, _ in right],
+                "left_bbox": _bbox([coordinates for _, coordinates in left]),
+                "right_bbox": _bbox([coordinates for _, coordinates in right]),
+                "gap": gap,
+            })
+        for previous, current in zip(split_rows, split_rows[1:]):
+            if current["line_index"] != previous["line_index"] + 1:
+                continue
+            # XML line keys are not printed-row numbers: require two descending text lines.
+            if not all(0 < current[side][1] - previous[side][1] <= 4 * max(previous[side][3] - previous[side][1], current[side][3] - current[side][1]) for side in ("left_bbox", "right_bbox")):
+                continue
+            if abs(previous["left_bbox"][0] - current["left_bbox"][0]) > 12 or abs(previous["right_bbox"][0] - current["right_bbox"][0]) > 12:
+                continue
+            gap_start = max(previous["left_bbox"][2], current["left_bbox"][2])
+            gap_end = min(previous["right_bbox"][0], current["right_bbox"][0])
+            if gap_end - gap_start < threshold:
+                continue
+            selected = {previous["line_index"], current["line_index"]}
+            right_words = previous["right"] + current["right"]
+            right_boxes = [_element_bbox(word) for word in right_words]
+            right_width = max(item[2] for item in right_boxes) - min(item[0] for item in right_boxes)
+            if len(right_words) < 6 or right_width > (parent_bbox[2] - parent_bbox[0]) * 0.45:
+                continue
+            if any(
+                coordinates[2] > gap_start + 2
+                for line_index, entries in enumerate(lines) if line_index not in selected
+                for _, coordinates in entries
+            ):
+                continue
+            boundaries = []
+            for row in (previous, current):
+                left_word, right_word = row["left"][-1], row["right"][0]
+                boundaries.append({
+                    "line_index": row["line_index"],
+                    "raw_word_texts": [left_word.text or "", right_word.text or ""],
+                    "raw_word_bboxes": [_element_bbox(left_word), _element_bbox(right_word)],
+                    "gap_points": round(row["gap"], 6),
+                })
+            left_lines = [
+                next(row["left"] for row in (previous, current) if row["line_index"] == line_index)
+                if line_index in selected else [word for word, _ in entries]
+                for line_index, entries in enumerate(lines)
+            ]
+            metadata = {
+                "kind": "poppler_wrapped_text_partition",
+                "scope": "two_adjacent_lines_inside_one_poppler_xml_block",
+                "source_xml_block_index": source_block_index,
+                "source_block_bbox": parent_bbox,
+                "source_block_line_count": len(lines),
+                "source_block_word_count": len(all_words),
+                "ordinary_median_gap_points": round(ordinary_median, 6) if ordinary_median is not None else None,
+                "threshold_points": round(threshold, 6),
+                "common_gap_points": round(gap_end - gap_start, 6),
+                "right_width_fraction_of_parent": round(right_width / (parent_bbox[2] - parent_bbox[0]), 6),
+                "partition_line_indices": [previous["line_index"], current["line_index"]],
+                "line_boundaries": boundaries,
+                "pre_partition_text": "block.source_text_before_adjustments",
+            }
+            return left_lines, [previous["right"], current["right"]], metadata
+    except (KeyError, ValueError, TypeError, OverflowError):
+        return None
+    return None
+
+
 def _poppler_page(page: ET.Element) -> list[dict[str, Any]]:
     output: list[dict[str, Any]] = []
-    for element in (item for item in page.iter() if local_name(item.tag) == "block"):
-        lines: list[str] = []
-        word_boxes: list[list[float]] = []
-        for word in (item for item in element.iter() if local_name(item.tag) == "word"):
-            try:
-                coordinates = _element_bbox(word)
-                if coordinates is not None:
-                    word_boxes.append(coordinates)
-            except (KeyError, ValueError):
+    try:
+        raw_width = page.attrib.get("width", page.attrib.get("Width"))
+        page_width = float(raw_width) if raw_width is not None else None
+    except (ValueError, TypeError, OverflowError):
+        page_width = None
+    page_blocks = [item for item in page.iter() if local_name(item.tag) == "block"]
+    for source_block_index, element in enumerate(page_blocks):
+        line_nodes = [item for item in element.iter() if local_name(item.tag) == "line"]
+        all_lines = [[item for item in line.iter() if local_name(item.tag) == "word"] for line in line_nodes]
+        if not all_lines:
+            all_lines = [[item for item in element.iter() if local_name(item.tag) == "word"]]
+        parent_before_lines = [
+            " ".join(word.text or "" for word in words).strip(" \t\r\n")
+            for words in all_lines
+            if any((word.text or "").strip() or has_illegal_xml_control(word.text or "") for word in words)
+        ]
+        parent_before = "\n".join(parent_before_lines)
+        partition = _wrapped_text_partition(element, page_width, source_block_index)
+        if partition:
+            left_lines, right_lines, partition_metadata = partition
+            fragments = [
+                (left_lines, {**partition_metadata, "fragment": "left_original_words", "source_line_indices": list(range(len(all_lines)))}),
+                (right_lines, {**partition_metadata, "fragment": "right_original_words", "source_line_indices": partition_metadata["partition_line_indices"]}),
+            ]
+        else:
+            fragments = [(all_lines, None)]
+        for fragment_lines, adjustment in fragments:
+            lines: list[str] = []
+            lines_before_adjustments: list[str] = []
+            adjustments: list[dict[str, Any]] = [adjustment] if adjustment else []
+            word_boxes: list[list[float]] = []
+            fragment_words = [word for words in fragment_lines for word in words]
+            for word in fragment_words:
+                try:
+                    coordinates = _element_bbox(word)
+                    if coordinates is not None:
+                        word_boxes.append(coordinates)
+                except (KeyError, ValueError):
+                    continue
+            for elements in fragment_lines:
+                words = [item.text or "" for item in elements]
+                if any(word.strip() or has_illegal_xml_control(word) for word in words):
+                    lines_before_adjustments.append(" ".join(words).strip(" \t\r\n"))
+                    if line_nodes:
+                        line_text, line_adjustments = _join_line_words(elements)
+                        lines.append(line_text.strip(" \t\r\n"))
+                        adjustments.extend(line_adjustments)
+                    else:
+                        lines.append(" ".join(words).strip(" \t\r\n"))
+            text = "\n".join(lines)
+            if not text.strip() and not has_illegal_xml_control(text):
                 continue
-        for line in (item for item in element.iter() if local_name(item.tag) == "line"):
-            words = [(item.text or "") for item in line.iter() if local_name(item.tag) == "word"]
-            if any(word.strip() for word in words):
-                lines.append(" ".join(words).strip())
-        if not lines:
-            words = [(item.text or "") for item in element.iter() if local_name(item.tag) == "word"]
-            if any(word.strip() for word in words):
-                lines = [" ".join(words).strip()]
-        text = "\n".join(lines)
-        if not text.strip():
-            continue
-        element_coordinates = _element_bbox(element)
-        bbox = element_coordinates if element_coordinates is not None else _bbox(word_boxes) if word_boxes else [0.0, 0.0, 0.0, 0.0]
-        output.append({
-            "raw_id": f"r{len(output):04d}",
-            "bbox": bbox,
-            "raw_text": text,
-            "text": text,
-            "source_order": len(output),
-            "original_kind": "body",
-            "raw_kind": "body",
-            "font_size_max": None,
-            "font_bold": None,
-        })
+            element_coordinates = _element_bbox(element)
+            bbox = _bbox(word_boxes) if adjustment and word_boxes else element_coordinates if element_coordinates is not None else _bbox(word_boxes) if word_boxes else [0.0, 0.0, 0.0, 0.0]
+            block = {
+                "raw_id": f"r{len(output):04d}",
+                "bbox": bbox,
+                "raw_text": text,
+                "text": text,
+                "source_order": len(output),
+                "original_kind": "body",
+                "raw_kind": "body",
+                "font_size_max": None,
+                "font_bold": None,
+            }
+            has_numeric_adjustments = any(entry["kind"] == "numeric_subscript_geometry" for entry in adjustments)
+            has_alphabetic_adjustments = any(entry["kind"] == "alphabetic_subscript_geometry" for entry in adjustments)
+            has_punctuation_adjustments = any(entry["kind"] == "post_subscript_punctuation_geometry" for entry in adjustments)
+            if adjustment or has_punctuation_adjustments:
+                block["requires_visual_review"] = True
+            if adjustment or has_numeric_adjustments or has_alphabetic_adjustments or has_punctuation_adjustments:
+                block["source_text_before_adjustments"] = parent_before if adjustment else "\n".join(lines_before_adjustments)
+                block["source_text_adjustments"] = adjustments
+            warnings = ["Poppler wrapped-text partition from two-line geometry; parent text and word coordinates retained; review the page"] if adjustment else []
+            if has_numeric_adjustments:
+                warnings.append("Numeric subscript words joined from touching same-line geometry; original words and coordinates retained")
+            if has_alphabetic_adjustments:
+                warnings.append("Alphabetic subscript words joined from touching same-line geometry; original words and coordinates retained")
+            if has_punctuation_adjustments:
+                warnings.append("Post-subscript punctuation joined from a small measured gap; original words and coordinates retained; review typography")
+            if warnings:
+                block["warnings"] = warnings
+            output.append(block)
     return output
 
 
@@ -237,6 +468,7 @@ def extract_command(
     errors = list(record.get("errors", []))
     pymupdf_document = None
     poppler_root = None
+    poppler_recovery = None
     poppler_elements: list[ET.Element] = []
     if backend == "pymupdf" and record["status"] not in {"encrypted", "failed"}:
         import pymupdf
@@ -251,9 +483,9 @@ def extract_command(
         code, log = run_to_log([executable, "-bbox-layout", str(pdf_path), str(bbox_output)], work / "pdftotext-extract.log")
         if code == 0:
             try:
-                poppler_root = ET.parse(bbox_output).getroot()
+                poppler_root, poppler_recovery = parse_poppler_bbox(bbox_output)
                 poppler_elements = [element for element in poppler_root.iter() if local_name(element.tag) == "page"]
-            except ET.ParseError as exc:
+            except (ET.ParseError, UnicodeError, LookupError, ValueError) as exc:
                 errors.append(error_record("unreadable_pdf", "extract", f"Invalid bbox XML: {exc}"))
         else:
             errors.append(error_record("unreadable_pdf", "extract", f"pdftotext code {code}: {log[-2000:]}"))
@@ -277,9 +509,14 @@ def extract_command(
         try:
             if action in {"extract", "extract_and_review"}:
                 if backend == "pymupdf" and pymupdf_document is not None:
-                    page["raw_blocks"] = _pymupdf_page(pymupdf_document[number - 1])
+                    table_diagnostics: list[str] = []
+                    page["raw_blocks"] = _pymupdf_page(pymupdf_document[number - 1], table_diagnostics)
+                    page["warnings"].extend(table_diagnostics)
                 elif backend == "poppler" and number <= len(poppler_elements):
                     page["raw_blocks"] = _poppler_page(poppler_elements[number - 1])
+                    control_warning = page_control_warning(poppler_recovery, number)
+                    if control_warning:
+                        page["warnings"].append(control_warning)
                 else:
                     raise ValueError("Selected extractor did not yield this page")
                 page["extraction_method"] = backend
@@ -345,6 +582,8 @@ def extract_command(
         "errors": errors,
         "status": "partial" if errors or failed or skipped or record.get("page_count", len(pages)) != processed else "complete",
     }
+    if poppler_recovery:
+        document["extraction_recovery"] = poppler_recovery
     atomic_write_json(output, document)
     _update_early_result(plan, document, output)
     print(

@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import re
+from statistics import median
 from typing import Any
 
 
 TERMINAL_RE = re.compile(r"[.!?:;。！？；：)\]」』】]$")
-CAPTION_RE = re.compile(r"^\s*(figure|fig\.?|table|图|表)\s*([A-Za-z]?\d+(?:\.\d+)*)", re.I)
+CAPTION_RE = re.compile(r"^\s*(figure|fig\.?|table|图|表)\s*([A-Za-z]?\d+(?:\.\d+)*)(?=\s*[:.．。：])", re.I)
 NUMBERED_HEADING_RE = re.compile(r"^\d+(?:\.\d+)*[.)]?\s+\S")
 EQUATION_NUMBER_RE = re.compile(r"(?:\(|（)(\d+(?:\.\d+)*)(?:\)|）)\s*$")
 
@@ -14,7 +15,44 @@ def normalized(value: str) -> str:
     return " ".join(value.split())
 
 
-def _classify(block: dict[str, Any]) -> dict[str, Any]:
+def _numbered_heading(block: dict[str, Any], text: str, font_size_reference: float | None) -> bool:
+    if len(text) > 180 or not NUMBERED_HEADING_RE.match(text):
+        return False
+    parts = text.split(maxsplit=1)
+    if len(parts) > 1:
+        second_token = parts[1].split()[0]
+        if re.fullmatch(r"\d+(?:[.,]\d+)*", second_token) or re.fullmatch(r"[x×*]", second_token, re.I):
+            return False
+    font_size = block.get("font_size_max")
+    if isinstance(font_size, (int, float)) and font_size_reference and font_size < font_size_reference * 0.85:
+        return False
+    return True
+
+
+def _bottom_margin_numbered_prose(block: dict[str, Any], text: str, page_height: float | None) -> bool:
+    if not isinstance(page_height, (int, float)) or page_height <= 0:
+        return False
+    bbox = block.get("bbox") or []
+    if len(bbox) < 4 or not isinstance(bbox[1], (int, float)):
+        return False
+    return (
+        bbox[1] >= page_height * 0.85
+        and len(text.split()) >= 9
+        and re.search(r"[.!?。！？]$", text) is not None
+    )
+
+
+def _source_defaults(item: dict[str, Any]) -> dict[str, Any]:
+    if item.get("source_text") is None:
+        item["source_text"] = item.get("raw_text") if item.get("raw_text") is not None else item.get("text", "")
+    item.setdefault("warnings", [])
+    item.setdefault("links", [])
+    return item
+
+
+def _classify(
+    block: dict[str, Any], font_size_reference: float | None = None, page_height: float | None = None
+) -> dict[str, Any]:
     item = dict(block)
     text = normalized(item.get("text", ""))
     if item.get("original_kind") == "table":
@@ -31,9 +69,15 @@ def _classify(block: dict[str, Any]) -> dict[str, Any]:
         elif equation and len(text) <= 300 and re.search(r"[=+\-*/^_≤≥∑∫]", text):
             item["kind"] = "formula"
             item["formula_number"] = equation.group(1)
-        elif NUMBERED_HEADING_RE.match(text) and len(text) <= 180:
-            item["kind"] = "heading"
-            item["heading_level"] = text.split()[0].strip(".)").count(".") + 1
+        elif _numbered_heading(item, text, font_size_reference):
+            if _bottom_margin_numbered_prose(item, text, page_height):
+                item["kind"] = "body"
+                item["warnings"] = list(item.get("warnings") or []) + [
+                    "Numbered prose in the bottom margin treated as body rather than a verified heading; review possible footnote"
+                ]
+            else:
+                item["kind"] = "heading"
+                item["heading_level"] = text.split()[0].strip(".)").count(".") + 1
         elif re.match(r"(?i)^(?:abstract|references|acknowledg\w*|appendix)\b", text) and len(text) <= 180:
             item["kind"] = "heading"
             item["heading_level"] = 1
@@ -45,26 +89,62 @@ def _classify(block: dict[str, Any]) -> dict[str, Any]:
             match = EQUATION_NUMBER_RE.search(text)
             item["formula_number"] = match.group(1) if match else None
     item["text"] = text
-    item.setdefault("source_text", item.get("raw_text", item.get("text", "")))
-    item.setdefault("warnings", [])
-    item.setdefault("links", [])
-    return item
+    return _source_defaults(item)
 
 
 def _mark_repeated_margins(pages: list[dict[str, Any]]) -> None:
     occurrences: dict[str, list[tuple[int, dict[str, Any], str]]] = {}
+    prefixed_headers: dict[str, list[tuple[int, dict[str, Any], bool]]] = {}
+    numeric_margin_counts: dict[tuple[int, str], int] = {}
+    for page in pages:
+        height = page.get("height") or 1
+        for block in page.get("raw_blocks", []):
+            if block.get("original_kind") == "table":
+                continue
+            text = normalized(block.get("text", ""))
+            if not re.fullmatch(r"\d{1,4}", text):
+                continue
+            _, y0, _, y1 = block.get("bbox", [0, 0, 0, 0])
+            region = "header" if y1 <= height * 0.15 else "footer" if y0 >= height * 0.85 else ""
+            if region:
+                key = (page["page_number"], region)
+                numeric_margin_counts[key] = numeric_margin_counts.get(key, 0) + 1
     for page in pages:
         width = page.get("width") or 1
         height = page.get("height") or 1
         for block in page.get("raw_blocks", []):
+            # A repeated short table label is not necessarily a running page margin.
+            if block.get("original_kind") == "table":
+                continue
             text = normalized(block.get("text", ""))
             if not text or len(text) > 240:
                 continue
             x0, y0, x1, y1 = block.get("bbox", [0, 0, width, height])
             region = "header" if y1 <= height * 0.15 else "footer" if y0 >= height * 0.85 else ""
-            if region or re.fullmatch(r"\d{1,4}", text):
-                region = region or "footer"
+            numeric = re.fullmatch(r"\d{1,4}", text) is not None
+            if numeric and not region:
+                block["raw_kind"] = "body"
+            if numeric and region and numeric_margin_counts.get((page["page_number"], region), 0) > 1:
+                block["raw_kind"] = "body"
+                block["warnings"] = list(block.get("warnings") or []) + [
+                    "Multiple isolated numeric blocks in this page margin; retained in the main reading flow instead of automatic page-number classification"
+                ]
+                continue
+            if region and len(text.split()) < 2 and not numeric:
+                continue
+            if region:
                 occurrences.setdefault(text.lower(), []).append((page["page_number"], block, region))
+            if region == "header":
+                prefix = re.match(r"^(\d{1,4})\s+(.+)$", text)
+                matching_prefix = bool(
+                    prefix
+                    and int(prefix.group(1)) == page["page_number"]
+                    and re.search(r"[^\W\d_]", prefix.group(2))
+                )
+                header_key = prefix.group(2) if matching_prefix else text
+                prefixed_headers.setdefault(header_key.lower(), []).append(
+                    (page["page_number"], block, matching_prefix)
+                )
     repeated = {text for text, values in occurrences.items() if len({item[0] for item in values}) >= 2}
     for text, values in occurrences.items():
         for _, block, region in values:
@@ -73,6 +153,22 @@ def _mark_repeated_margins(pages: list[dict[str, Any]]) -> None:
                 block["kind"] = region
                 block["text"] = normalized(block.get("text", ""))
                 block["warnings"] = ["Classified as a repeated page number" if region == "footer" and text.isdigit() else "Classified as a repeated margin block; original text retained"]
+    # Preserve exact matching above. A second, stricter pass handles running headers
+    # whose physical page number was extracted in the same text block as the title.
+    repeated_prefixed = {
+        text for text, values in prefixed_headers.items()
+        if len({number for number, _, matching_prefix in values if matching_prefix}) >= 3
+    }
+    for text, values in prefixed_headers.items():
+        if text not in repeated_prefixed:
+            continue
+        for _, block, _ in values:
+            block["raw_kind"] = "header"
+            block["kind"] = "header"
+            block["text"] = normalized(block.get("text", ""))
+            block["warnings"] = [
+                "Classified as a repeated running header after matching a physical page-number prefix across at least three pages; original text retained"
+            ]
 
 
 def _full_width(block: dict[str, Any], width: float) -> bool:
@@ -137,19 +233,57 @@ def _order_zone(blocks: list[dict[str, Any]], width: float) -> tuple[list[dict[s
     return ordered, {"columns": len(divided), "ambiguous": False, "raw_columns": debug_columns}
 
 
+def _table_barrier_conflict(block: dict[str, Any], body: list[dict[str, Any]], width: float, height: float) -> list[str]:
+    if block.get("original_kind") != "table" or not _full_width(block, width):
+        return []
+    x0, y0, x1, y1 = block["bbox"]
+    conflicts = []
+    for caption in body:
+        if caption.get("kind") != "figure_caption":
+            continue
+        cx0, cy0, cx1, cy1 = caption["bbox"]
+        horizontal = max(0.0, min(x1, cx1) - max(x0, cx0))
+        center_y = (cy0 + cy1) / 2
+        if y0 <= center_y <= y1 and horizontal >= (cx1 - cx0) * 0.5 and y1 > cy1 + height * 0.05:
+            conflicts.append(str(caption.get("caption_number", "unknown")))
+    return conflicts
+
+
 def _order_page(page: dict[str, Any], naive: bool) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     width = float(page.get("width") or 1)
     margins = [block for block in page.get("raw_blocks", []) if block.get("raw_kind") in {"header", "footer"}]
     headers = sorted((b for b in margins if b.get("raw_kind") == "header"), key=lambda b: b["bbox"][1])
     footers = sorted((b for b in margins if b.get("raw_kind") == "footer"), key=lambda b: b["bbox"][1])
-    body = [_classify(block) for block in page.get("raw_blocks", []) if block.get("raw_kind") not in {"header", "footer"}]
+    # Weight by text length: many tiny axis labels must not define body-font size.
+    font_sizes = []
+    for block in page.get("raw_blocks", []):
+        size = block.get("font_size_max")
+        if not isinstance(size, (int, float)) or size <= 0:
+            continue
+        weight = max(1, len(" ".join(str(block.get("text", "")).split())))
+        font_sizes.extend([float(size)] * weight)
+    reference_font = median(font_sizes) if font_sizes else None
+    body = [
+        _classify(block, reference_font, page_height=float(page.get("height") or 1))
+        for block in page.get("raw_blocks", [])
+        if block.get("raw_kind") not in {"header", "footer"}
+    ]
     for block in body:
         block["bbox"] = [float(value) for value in block.get("bbox", [0, 0, width, page.get("height") or 1])]
     if naive:
         ordered = sorted(body, key=lambda item: (item["bbox"][1], item["bbox"][0], item.get("raw_id", "")))
         return [*_classify_margin(headers), *ordered, *_classify_margin(footers)], {"mode": "naive", "zones": []}
 
-    full = sorted((b for b in body if _full_width(b, width)), key=lambda b: (b["bbox"][1], b["bbox"][0]))
+    full = []
+    for candidate in sorted((b for b in body if _full_width(b, width)), key=lambda b: (b["bbox"][1], b["bbox"][0])):
+        conflicts = _table_barrier_conflict(candidate, body, width, float(page.get("height") or 1))
+        if conflicts:
+            candidate["layout_barrier_excluded"] = True
+            warning = "Table candidate bbox overlaps figure caption(s) " + ", ".join(conflicts) + " and extends more than 5% of page height below them; candidate text retained, not used as a full-width barrier"
+            candidate["table_warning"] = (candidate.get("table_warning", "") + "; " + warning).strip("; ")
+            page.setdefault("warnings", []).append(f"table_barrier_excluded: {candidate['raw_id']} requires visual review because its bbox captures later figure-caption content")
+            continue
+        full.append(candidate)
     remaining = [b for b in body if b not in full]
     assigned: set[str] = set()
     zones: list[tuple[str, list[dict[str, Any]]]] = []
@@ -193,7 +327,10 @@ def _order_page(page: dict[str, Any], naive: bool) -> tuple[list[dict[str, Any]]
 
 
 def _classify_margin(blocks: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    return [dict(block, text=normalized(block.get("text", "")), kind=block.get("raw_kind")) for block in blocks]
+    return [
+        _source_defaults(dict(block, text=normalized(block.get("text", "")), kind=block.get("raw_kind")))
+        for block in blocks
+    ]
 
 
 def _add_section_paths(pages: list[dict[str, Any]]) -> None:

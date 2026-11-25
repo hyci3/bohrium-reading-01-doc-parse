@@ -155,6 +155,69 @@ class ContextWorkflowTest(unittest.TestCase):
         self.assertGreater(len(selected), 0)
         self.assertTrue(all(block["block_id"] for block in selected))
 
+    def test_multiline_header_and_unverified_table_rows_reach_selection(self) -> None:
+        table = {
+            "block_id": "p0001-b0099",
+            "page_number": 1,
+            "kind": "table",
+            "section_path": ["Experiments"],
+            "global_reading_order": 99,
+            "text": "Model & Method # Trainable Parameters MNLI SST-2",
+            "source_text": "Model & Method\n# Trainable\nParameters\nMNLI SST-2",
+            "rows": [["Model & Method", "# Trainable\nParameters", "MNLI"]],
+            "table_warning": "Automatic rows do not verify merged cells or column ownership",
+        }
+        self.document["pages"][0]["blocks"].append(table)
+        atomic_write_json(self.document_path, self.document)
+        code, selection_path, index_path, _ = self.select("table-evidence", block_ids=["p0001-b0099"], max_tokens=4000)
+        self.assertEqual(code, 0)
+        selected = read_json(selection_path)["selected_blocks"][0]
+        self.assertEqual(selected["text"], table["source_text"])
+        self.assertIn("# Trainable\nParameters", selected["text"])
+        self.assertEqual(selected["rows"], table["rows"])
+        self.assertTrue(selected["table_candidate"])
+        self.assertTrue(selected["requires_visual_review"])
+        self.assertIn("merged cells", selected["table_warning"])
+        entry = next(item for item in read_json(index_path)["special_blocks"] if item["block_id"] == table["block_id"])
+        self.assertEqual(entry["row_count"], 1)
+        self.assertEqual(entry["max_column_count"], 3)
+        self.assertNotIn("rows", entry)
+        self.assertTrue(entry["requires_visual_review"])
+
+    def test_layout_warnings_reach_selection_and_compact_index(self) -> None:
+        warnings = [
+            "Unstable multi-column hypothesis; retained coordinate fallback instead of forcing column ownership",
+            "Second diagnostic is retained without truncation",
+        ]
+        block = self.document["pages"][0]["blocks"][1]
+        original_full_text = block["text"]
+        block["warnings"] = warnings
+        block["text"] = "AP50"
+        block["bbox"] = [10, 10, 24, 20]
+        block["source_text"] = "AP50"
+        block["source_text_before_adjustments"] = "AP 50"
+        block["source_text_adjustments"] = [{
+            "kind": "numeric_subscript_geometry",
+            "raw_word_texts": ["AP", "50"],
+            "raw_word_bboxes": [[10, 10, 20, 20], [20, 12, 24, 17]],
+            "gap_points": 0.0,
+        }]
+        atomic_write_json(self.document_path, self.document)
+        code, selection_path, index_path, _ = self.select("layout-warnings", block_ids=[block["block_id"]], max_tokens=4000)
+        self.assertEqual(code, 0)
+        selected = read_json(selection_path)["selected_blocks"][0]
+        self.assertEqual(selected["warnings"], warnings)
+        index = read_json(index_path)
+        self.assertTrue(index["pages"][0]["risk"])
+        inventory = read_json(index["inventory_artifact"])
+        preview = next(item for item in inventory["blocks"] if item["block_id"] == block["block_id"])
+        self.assertEqual(preview["warning_count"], len(warnings))
+        self.assertEqual(preview["source_text_adjustment_count"], 1)
+        self.assertNotIn("warnings", preview)
+        self.assertNotIn(original_full_text, str(index))
+        self.assertEqual(selected["source_text_before_adjustments"], "AP 50")
+        self.assertEqual(selected["source_text_adjustments"], block["source_text_adjustments"])
+
     def test_full_document_segments_merge_actual_agent_results(self) -> None:
         segments_dir = self.root / "full" / "segments"
         selection_path, index_path, budget_path = self.paths("full")
@@ -215,6 +278,33 @@ class ContextWorkflowTest(unittest.TestCase):
         self.assertEqual(result["answer"], merged["fields"]["answer"])
         self.assertEqual(len(result["sources"]), 8)
         self.assertTrue(result["context"]["segmented_result_complete"])
+
+    def test_targeted_cursor_retains_scope_and_rejects_expansion(self) -> None:
+        code, reference_path, _, _ = self.select("scope-reference", pages=[1], max_tokens=4000)
+        self.assertEqual(code, 0)
+        reference = read_json(reference_path)
+        self.assertEqual(reference["new_evidence_count"], 4)
+        limit = reference["new_evidence_estimated_tokens"] - 1
+        code, first_path, _, state_path = self.select("scoped", pages=[1], max_tokens=limit)
+        self.assertEqual(code, 0)
+        first = read_json(first_path)
+        self.assertTrue(first["truncated"])
+        self.assertGreater(first["remaining_blocks"], 0)
+        self.assertEqual(first["selected_count"], first["new_evidence_count"] + first["reused_reference_count"])
+        code, second_path, _, _ = self.select("scoped-next", cursor=first["next_cursor"], budget_state=state_path, max_tokens=4000)
+        self.assertEqual(code, 0)
+        second = read_json(second_path)
+        self.assertEqual(second["filters"]["pages"], [1])
+        self.assertEqual(second["remaining_blocks"], 0)
+        self.assertFalse(second["truncated"])
+        self.assertTrue(all(block["page_number"] == 1 for block in second["selected_blocks"]))
+        self.assertEqual(first["new_evidence_estimated_tokens"] + second["new_evidence_estimated_tokens"], reference["new_evidence_estimated_tokens"])
+        code, _, _, _ = self.select("scoped-explicit-repeat", pages=[1], cursor=first["next_cursor"], budget_state=state_path, max_tokens=4000)
+        self.assertEqual(code, 0)
+        state_before = read_json(state_path)
+        with self.assertRaisesRegex(ValueError, "Cursor selection scope changed"):
+            self.select("scope-expansion", pages=[2], cursor=first["next_cursor"], budget_state=state_path, max_tokens=4000)
+        self.assertEqual(read_json(state_path), state_before)
 
     def test_missing_segment_result_preserves_unfinished_scope(self) -> None:
         directory = self.root / "missing"
