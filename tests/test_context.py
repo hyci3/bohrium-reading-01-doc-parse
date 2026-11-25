@@ -6,6 +6,8 @@ import uuid
 from tests._support import TEST_WORK
 from pdf_evidence.case_io import atomic_write_json, read_json
 from pdf_evidence.context import (
+    _index_payload,
+    _update_early_result,
     document_content_sha256,
     estimate_json_tokens,
     merge_segment_results,
@@ -328,6 +330,65 @@ class ContextWorkflowTest(unittest.TestCase):
         self.assertEqual(merged["coverage"]["missing_block_ids"], ["p0001-b0001", "p0001-b0002"])
         errors = read_json(directory / "merged.json")["errors"]
         self.assertTrue(any(error["kind"] == "segment_result_missing" for error in errors))
+
+
+class IndexBudgetingTest(unittest.TestCase):
+    def build_document(self, page_count: int) -> dict:
+        pages = []
+        order = 0
+        for page_number in range(1, page_count + 1):
+            blocks = []
+            for index in range(2):
+                order += 1
+                blocks.append({
+                    "block_id": f"p{page_number:04d}-b{index + 1:04d}",
+                    "page_number": page_number,
+                    "bbox": [50, 50 + index * 80, 550, 70 + index * 80],
+                    "kind": "body",
+                    "section_path": ["Methods"],
+                    "global_reading_order": order,
+                    "text": f"Evidence block {order} records a measured value.",
+                })
+            pages.append({
+                "page_number": page_number,
+                "width": 600,
+                "height": 800,
+                "status": "complete",
+                "blocks": blocks,
+            })
+        return {"case_id": "synthetic-index", "page_count": page_count, "status": "complete", "pages": pages}
+
+    def test_trimming_accounts_for_every_page(self) -> None:
+        document = self.build_document(4)
+        index_path = TEST_WORK / f"m5-index-{uuid.uuid4().hex}.json"
+        index, _ = _index_payload(document, {"document_index_max_tokens": 150}, index_path)
+        self.assertEqual(index["indexed_page_count"], len(index["pages"]))
+        self.assertEqual(index["indexed_page_count"] + index.get("omitted_page_count", 0), 4)
+        self.assertTrue(index["truncated"])
+
+    def test_generous_limit_indexes_every_page(self) -> None:
+        document = self.build_document(4)
+        index_path = TEST_WORK / f"m5-index-{uuid.uuid4().hex}.json"
+        index, _ = _index_payload(document, {"document_index_max_tokens": 12000}, index_path)
+        self.assertEqual(index["indexed_page_count"], 4)
+        self.assertFalse(index["truncated"])
+        self.assertNotIn("omitted_page_count", index)
+        self.assertEqual(index["page_count"], 4)
+
+    def test_broken_early_result_is_reported_instead_of_crashing(self) -> None:
+        directory = TEST_WORK / f"m5-early-{uuid.uuid4().hex}"
+        directory.mkdir(parents=True, exist_ok=True)
+        broken = directory / "result.json"
+        broken.write_text("{not json", encoding="utf-8")
+        selection: dict = {"status": "success", "selected_blocks": [], "remaining_blocks": 0, "budget": {}}
+        _update_early_result({"early_result": str(broken)}, selection)
+        self.assertEqual(selection["errors"][0]["kind"], "runtime_failure")
+        self.assertIn("Cannot update early result", selection["errors"][0]["message"])
+        atomic_write_json(broken, ["not", "an", "object"])
+        selection = {"status": "success", "selected_blocks": [], "remaining_blocks": 0, "budget": {}}
+        _update_early_result({"early_result": str(broken)}, selection)
+        self.assertEqual(selection["errors"][0]["kind"], "runtime_failure")
+        self.assertIn("not a JSON object", selection["errors"][0]["message"])
 
 
 if __name__ == "__main__":

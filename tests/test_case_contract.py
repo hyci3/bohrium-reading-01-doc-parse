@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import json
+import os
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from tests._support import FIXTURES, TEST_WORK
-from pdf_evidence.case_io import decode_contract, inspect_case_command, read_json
+from pdf_evidence.case_io import atomic_write_json, decode_contract, inspect_case_command, read_json
 
 
 class CaseContractTest(unittest.TestCase):
@@ -74,6 +76,32 @@ class CaseContractTest(unittest.TestCase):
         self.assertEqual(errors, [])
         self.assertEqual(set(fields), {"answer", "count"})
         self.assertEqual(required, ["answer"])
+
+
+class AtomicWriteRetryTest(unittest.TestCase):
+    def test_transient_permission_error_is_retried(self) -> None:
+        target = TEST_WORK / "m2-atomic" / "result.json"
+        real_replace = os.replace
+        calls = {"count": 0}
+
+        def flaky_replace(source, destination):
+            calls["count"] += 1
+            if calls["count"] < 3:
+                raise PermissionError(13, "Access is denied")
+            return real_replace(source, destination)
+
+        with patch("pdf_evidence.case_io.os.replace", side_effect=flaky_replace):
+            atomic_write_json(target, {"case_id": "synthetic"})
+        self.assertEqual(calls["count"], 3)
+        self.assertEqual(read_json(target), {"case_id": "synthetic"})
+
+    def test_permanent_permission_error_still_raises_and_cleans_up(self) -> None:
+        target = TEST_WORK / "m2-atomic" / "locked.json"
+        with patch("pdf_evidence.case_io.os.replace", side_effect=PermissionError(13, "Access is denied")):
+            with self.assertRaises(PermissionError):
+                atomic_write_json(target, {"case_id": "synthetic"})
+        self.assertFalse(target.exists())
+        self.assertEqual([path.name for path in target.parent.glob("*.tmp")], [])
 
 
 if __name__ == "__main__":

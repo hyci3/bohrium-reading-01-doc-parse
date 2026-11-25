@@ -222,8 +222,9 @@ def _order_zone(blocks: list[dict[str, Any]], width: float) -> tuple[list[dict[s
             "raw_blocks": [b["raw_id"] for b in blocks],
         }
     ordered: list[dict[str, Any]] = []
+    assigned = {id(entry) for cluster in divided for entry in cluster}
     for block in blocks:
-        if block not in [entry for cluster in divided for entry in cluster]:
+        if id(block) not in assigned:
             block["warnings"].append("Column assignment was ambiguous; retained raw coordinate evidence")
     debug_columns: list[list[str]] = []
     for column in divided:

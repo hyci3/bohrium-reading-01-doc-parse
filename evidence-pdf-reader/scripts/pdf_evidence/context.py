@@ -163,19 +163,24 @@ def _index_payload(document: dict[str, Any], profile: dict[str, int], index_path
     limit = int(profile["document_index_max_tokens"])
     omitted_special = 0
     omitted_pages = 0
-    while estimate_json_tokens(index) > limit and index["special_blocks"]:
-        index["special_blocks"].pop()
+    remaining_tokens = estimate_json_tokens(index)
+    while remaining_tokens > limit and index["special_blocks"]:
+        remaining_tokens -= estimate_json_tokens(index["special_blocks"].pop()) + 2
         omitted_special += 1
-    if omitted_special:
-        index["omitted_special_block_count"] = omitted_special
-        index["truncated"] = True
+    while remaining_tokens > limit and index["pages"]:
+        remaining_tokens -= estimate_json_tokens(index["pages"].pop()) + 2
+        omitted_pages += 1
     while estimate_json_tokens(index) > limit and index["pages"]:
         index["pages"].pop()
         omitted_pages += 1
+    if omitted_special:
+        index["omitted_special_block_count"] = omitted_special
+        index["truncated"] = True
     if omitted_pages:
         index["omitted_page_count"] = omitted_pages
         index["page_index_continuation"] = "Use --page for unlisted pages; the inventory contains stable block references."
         index["truncated"] = True
+    index["indexed_page_count"] = len(index["pages"])
     atomic_write_json(inventory_path, inventory)
     return index, inventory_path
 
@@ -302,7 +307,12 @@ def _update_early_result(plan: dict[str, Any], selection: dict[str, Any]) -> Non
     path = Path(plan["early_result"])
     try:
         early = read_json(path)
-    except Exception:
+        if not isinstance(early, dict):
+            raise ValueError("early result is not a JSON object")
+    except Exception as exc:
+        selection.setdefault("errors", []).append(error_record(
+            "runtime_failure", "select-context", f"Cannot update early result {path}: {exc}",
+        ))
         return
     early["context"] = {
         "status": selection["status"],
@@ -494,7 +504,6 @@ def select_context_command(
             break
         chosen.append(payload)
         used_for_selection += payload["estimated_tokens"]
-    selected_ids = {block["block_id"] for block in chosen}
     omitted = [block["block_id"] for block in pending[next_index - start:]]
     new_chosen = [block for block in chosen if not block.get("reuse_only")]
     if new_chosen:

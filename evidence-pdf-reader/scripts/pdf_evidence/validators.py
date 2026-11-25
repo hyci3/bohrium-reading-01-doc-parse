@@ -282,16 +282,20 @@ def evaluate_order_object(document: dict[str, Any], gold: dict[str, Any]) -> dic
         blocks = [block for block in matching_page.get("blocks", []) if block.get("kind") not in {"header", "footer"}]
         actual_texts = [normalized_text(block.get("text")) for block in blocks]
         positions: list[int] = []
+        page_missing: list[dict[str, Any]] = []
+        page_duplicate: list[dict[str, Any]] = []
         for wanted in expected:
             normalized_wanted = normalized_text(wanted)
             indices = [index for index, text in enumerate(actual_texts) if text == normalized_wanted]
             if not indices:
-                missing.append({"page_number": page_number, "text": wanted})
+                page_missing.append({"page_number": page_number, "text": wanted})
             elif len(indices) > 1:
-                duplicate.append({"page_number": page_number, "text": wanted})
+                page_duplicate.append({"page_number": page_number, "text": wanted})
             else:
                 positions.append(indices[0] + 1)
-        if missing or duplicate:
+        missing.extend(page_missing)
+        duplicate.extend(page_duplicate)
+        if page_missing or page_duplicate:
             continue
         inversions = sum(
             1 for left in range(len(positions)) for right in range(left + 1, len(positions))

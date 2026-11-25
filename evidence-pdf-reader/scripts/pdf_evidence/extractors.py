@@ -471,10 +471,12 @@ def extract_command(
     poppler_recovery = None
     poppler_elements: list[ET.Element] = []
     if backend == "pymupdf" and record["status"] not in {"encrypted", "failed"}:
-        import pymupdf
-
         try:
+            import pymupdf
+
             pymupdf_document = pymupdf.open(pdf_path)
+        except ImportError as exc:
+            errors.append(error_record("extractor_unavailable", "extract", f"PyMuPDF is not importable: {exc}"))
         except Exception as exc:
             errors.append(error_record("unreadable_pdf", "extract", str(exc)))
     elif backend == "poppler" and record["status"] not in {"encrypted", "failed"}:

@@ -103,6 +103,28 @@ class ResultValidationTest(unittest.TestCase):
         report = read_json(self.root / "result.finalize-validation.json")
         self.assertTrue(any("must be an object" in message for message in report["errors"]))
 
+    def test_existing_result_that_is_not_an_object_is_rejected_without_overwrite(self) -> None:
+        self.write_answer()
+        atomic_write_json(self.result_path, ["not", "an", "object"])
+        original_bytes = self.result_path.read_bytes()
+        self.assertEqual(finalize_result_command(self.plan_path, self.document_path, self.answer_path, self.result_path), 8)
+        self.assertEqual(self.result_path.read_bytes(), original_bytes)
+        report = read_json(self.root / "result.finalize-validation.json")
+        self.assertFalse(report["valid"])
+        self.assertTrue(any("not a JSON object" in message for message in report["errors"]))
+
+    def test_finalize_keeps_prior_artifact_paths(self) -> None:
+        self.write_answer()
+        initial = empty_result(self.plan["case_id"], self.plan["output_contract"], [])
+        initial["artifacts"] = {"case_plan": "/work/case-plan.json", "context_index": "/work/context-index.json"}
+        atomic_write_json(self.result_path, initial)
+        self.assertEqual(finalize_result_command(self.plan_path, self.document_path, self.answer_path, self.result_path), 0)
+        artifacts = read_json(self.result_path)["artifacts"]
+        self.assertEqual(artifacts["context_index"], "/work/context-index.json")
+        self.assertEqual(artifacts["case_plan"], str(self.plan_path.resolve()))
+        self.assertEqual(artifacts["document"], str(self.document_path.resolve()))
+        self.assertEqual(artifacts["answer"], str(self.answer_path.resolve()))
+
     def test_wrong_case_id_and_field_type_fail(self) -> None:
         self.write_answer()
         self.assertEqual(finalize_result_command(self.plan_path, self.document_path, self.answer_path, self.result_path), 0)

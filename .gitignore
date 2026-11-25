@@ -9,3 +9,9 @@ web/
 .out/
 __pycache__/
 *.py[cod]
+
+# Local AI memory database (contains no upstream content; never commit)
+.dsh-meow/
+
+# Local session exports of the development conversation
+bohrium/session-export-*

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from hashlib import sha256
+import builtins
 import time
 import uuid
 import unittest
@@ -414,6 +415,49 @@ class PopplerXmlAdapterTest(unittest.TestCase):
         malformed.write_bytes(b"<doc><page><word>one & two</word></page></doc>")
         with self.assertRaises(ET.ParseError):
             parse_poppler_bbox(malformed)
+
+
+class MissingExtractorReportingTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.root = TEST_WORK / "m3-missing-extractor"
+        cls.root.mkdir(parents=True, exist_ok=True)
+        cls.capabilities = cls.root / "capabilities.json"
+        assert capabilities_command(None, cls.capabilities) == 0
+
+    def test_missing_pymupdf_is_reported_instead_of_crashing(self) -> None:
+        pdf = (FIXTURES / "basic" / "two-column.pdf").resolve()
+        plan = self.root / "plan.json"
+        probe = self.root / "probe.json"
+        atomic_write_json(plan, {
+            "schema_version": "1.0",
+            "case_id": "synthetic-missing-pymupdf",
+            "early_result": str(self.root / "result.json"),
+        })
+        atomic_write_json(probe, {"schema_version": "1.0", "documents": [{
+            "path": str(pdf),
+            "backend": "pymupdf",
+            "status": "ready",
+            "page_count": 1,
+            "pages": [{"page_number": 1, "status": "text", "action": "extract", "width": 612, "height": 792}],
+            "errors": [],
+        }]})
+        real_import = builtins.__import__
+
+        def fake_import(name, *args, **kwargs):
+            if name == "pymupdf":
+                raise ImportError("simulated missing PyMuPDF")
+            return real_import(name, *args, **kwargs)
+
+        document_path = self.root / "document.json"
+        with patch("builtins.__import__", side_effect=fake_import):
+            code = extract_command(plan, probe, self.capabilities, self.root, document_path)
+        self.assertEqual(code, 6)
+        document = read_json(document_path)
+        self.assertEqual(document["status"], "partial")
+        self.assertEqual(document["coverage"]["processed"], 0)
+        kinds = {error.get("kind") for error in document["errors"]}
+        self.assertIn("extractor_unavailable", kinds)
 
 
 if __name__ == "__main__":

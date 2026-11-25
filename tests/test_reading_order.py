@@ -293,5 +293,23 @@ class ReadingOrderIntegrationTest(unittest.TestCase):
         self.assertFalse(read_json(report_path)["valid_gold_match"])
 
 
+class OrderEvaluationAccountingTest(unittest.TestCase):
+    def test_page_after_a_missing_block_is_still_scored(self) -> None:
+        document = {"pages": [
+            {"page_number": 1, "blocks": [{"kind": "body", "text": "alpha"}, {"kind": "body", "text": "gamma"}]},
+            {"page_number": 2, "blocks": [{"kind": "body", "text": "one"}, {"kind": "body", "text": "two"}]},
+        ]}
+        gold = {"case_id": "synthetic", "pages": {"1": ["alpha", "beta", "gamma"], "2": ["one", "two"]}}
+        report = evaluate_order_object(document, gold)
+        self.assertFalse(report["valid_gold_match"])
+        self.assertFalse(report["document_exact_match"])
+        self.assertEqual([item["page_number"] for item in report["missing"]], [1])
+        self.assertEqual([item["text"] for item in report["missing"]], ["beta"])
+        self.assertEqual([page["page_number"] for page in report["pages"]], [2])
+        self.assertEqual(report["pages"][0]["order_accuracy"], 1.0)
+        self.assertEqual(report["comparable_pairs"], 1)
+        self.assertEqual(report["exact_page_count"], 1)
+
+
 if __name__ == "__main__":
     unittest.main()

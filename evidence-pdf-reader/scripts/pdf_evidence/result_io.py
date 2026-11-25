@@ -46,7 +46,24 @@ def finalize_result_command(
     fields, _, contract_errors = decode_contract(plan.get("output_contract"))
     output = Path(output)
     if output.exists():
-        result = read_json(output)
+        try:
+            loaded = read_json(output)
+            load_error = f"Existing result at {output} is not a JSON object"
+        except Exception as exc:
+            loaded = None
+            load_error = f"Existing result at {output} is not readable JSON: {exc}"
+        if not isinstance(loaded, dict):
+            validation = {
+                "schema_version": "1.0",
+                "valid": False,
+                "case_id": plan.get("case_id"),
+                "errors": [load_error],
+            }
+            validation_path = output.with_name(f"{output.stem}.finalize-validation.json")
+            atomic_write_json(validation_path, validation)
+            print(f"finalize rejected; errors=1; report={validation_path}")
+            return 8
+        result = loaded
     else:
         result = {
             "case_id": plan.get("case_id"),
@@ -101,7 +118,11 @@ def finalize_result_command(
         "description": "Merged actual answer fields and evidence without modifying the original contract",
         "answer_artifact": str(Path(answer_path).resolve()),
     }]
+    prior_artifacts = result.get("artifacts")
+    if not isinstance(prior_artifacts, dict):
+        prior_artifacts = {}
     result["artifacts"] = {
+        **prior_artifacts,
         "case_plan": str(Path(plan_path).resolve()),
         "document": str(Path(document_path).resolve()),
         "answer": str(Path(answer_path).resolve()),
