@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Any
 
 from .context import merge_segment_results
+from .coverage import build_coverage_report, summarize_coverage
 from .case_io import (
     atomic_write_json,
     decode_contract,
@@ -129,6 +130,7 @@ def finalize_result_command(
     }
     if "coverage" in document:
         result["coverage"] = document["coverage"]
+    result["coverage_report"] = build_coverage_report(document)
     if merged:
         result["context"] = {
             **result.get("context", {}),
@@ -151,4 +153,5 @@ def finalize_result_command(
         return 8
     atomic_write_json(output, result)
     print(f"result={output}; status={result['status']}; sources={len(result['sources'])}")
+    print(summarize_coverage(result["coverage_report"]))
     return 0

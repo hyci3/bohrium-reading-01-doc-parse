@@ -11,6 +11,8 @@ NUMBERED_HEADING_RE = re.compile(r"^\d+(?:\.\d+)*[.)]?\s+\S")
 # Letter-numbered appendix headings ("A.2", "A.2.1", "Appendix B") never match NUMBERED_HEADING_RE.
 APPENDIX_HEADING_RE = re.compile(r"^(?:[A-Z](?:\.\d+)+|Appendix\s+[A-Z])\b")
 EQUATION_NUMBER_RE = re.compile(r"(?:\(|（)(\d+(?:\.\d+)*)(?:\)|）)\s*$")
+# Everything after a references heading is bibliography text even when the entries carry no [n] marker.
+REFERENCES_SECTION_RE = re.compile(r"^(?:references|bibliography|参考文献)\b", re.I)
 CONTROL_CHARS_RE = re.compile(r"[\x10-\x1f]")
 MATH_SYMBOL_RE = re.compile(r"[=+\-−×·*/^_∑∫∂≈≤≥±<>(){}\[\]]")
 MATH_STRONG_RE = re.compile(r"[=≈≤≥±∑∫∂^_]")
@@ -24,6 +26,23 @@ HEADING_STOPWORDS = frozenset({
     "than", "so", "such", "these", "those", "an", "into", "over", "under", "between", "both",
 })
 HEADING_TERMINAL_PUNCTUATION = ".,;:。，；：?!！？"
+# Abbreviations end with a period yet do not end a sentence, e.g. "4 QLoRA vs. Standard Finetuning".
+ABBREVIATION_RE = re.compile(
+    r"\b(?:vs|etc|al|Fig|Tab|Sec|Eq|Ref|No|approx|cf|resp|Dr|Prof|e\.g|i\.e|w\.r\.t)\.\s", re.I
+)
+
+
+def _has_inline_sentence(text: str) -> bool:
+    """True when a period is followed by a space without being part of an abbreviation."""
+    return ". " in ABBREVIATION_RE.sub(" ", text)
+
+
+SECTION_NUMBERING_RE = re.compile(r"^(?:\d+(?:\.\d+)*|[A-Z](?:\.\d+)+)[.)]?\s+")
+
+
+def _body_after_numbering(text: str) -> str:
+    """Drop a leading section number so "1. Introduction" is not read as a sentence break."""
+    return SECTION_NUMBERING_RE.sub("", text, count=1)
 
 
 def _math_fragment(text: str) -> bool:
@@ -82,6 +101,26 @@ def normalized(value: str) -> str:
     return " ".join(value.split())
 
 
+def _single_letter_appendix_heading(
+    block: dict[str, Any], text: str, font_size_reference: float | None
+) -> bool:
+    """Detect "A QLoRA vs Standard Finetuning ..." style appendix titles.
+
+    A lone capital letter is only accepted when the run is visually a heading (bold or larger than
+    the page's body text), otherwise ordinary sentences such as "A model that ..." would qualify.
+    """
+    if not re.match(r"^[A-Z]\s+[A-Z][A-Za-z]", text):
+        return False
+    if len(text) > 120 or len(text.split()) > 16 or _has_inline_sentence(text):
+        return False
+    if block.get("font_bold"):
+        return True
+    font_size = block.get("font_size_max")
+    return bool(
+        font_size_reference and font_size and font_size >= float(font_size_reference) * 1.05
+    )
+
+
 def _numbered_heading(block: dict[str, Any], text: str, font_size_reference: float | None) -> bool:
     if not (NUMBERED_HEADING_RE.match(text) or APPENDIX_HEADING_RE.match(text)):
         return False
@@ -96,6 +135,13 @@ def _numbered_heading(block: dict[str, Any], text: str, font_size_reference: flo
     if len(numeric_runs) >= 3 and letters <= 3 * len(numeric_runs):
         return False
     if _math_fragment(text):
+        return False
+    # A heading never carries a URL or an inline sentence break; those are footnotes whose marker
+    # was emitted as its own run.
+    # A heading never carries a URL or an inline sentence break; those are footnotes whose marker
+    # was emitted as its own run.
+    heading_body = _body_after_numbering(text)
+    if "://" in heading_body or _has_inline_sentence(heading_body):
         return False
     words = text.split()
     # Headings are labels, not sentences: terminal punctuation betrays numbered list items and
@@ -154,15 +200,61 @@ def _classify(
         if isinstance(rows, list) and rows:
             # Keep physical rows on their own lines: a single flattened line invites row/column
             # misreads (e.g. reading a neighbouring row's cell as the target model's score).
-            item["table_row_count"] = len(rows)
-            item["table_column_count"] = max((len(row) for row in rows), default=0)
-            item["text"] = "\n".join(
-                " | ".join("" if cell is None else str(cell) for cell in row) for row in rows
-            )
+            width = max((len(row) for row in rows), default=0)
+            rows = [list(row) + [""] * (width - len(row)) for row in rows]
+            cells = [cell for row in rows for cell in row]
+            empty_ratio = (sum(1 for cell in cells if not cell) / len(cells)) if cells else 0.0
+            header = [str(cell) for cell in (item.get("table_header") or [])]
+            header_ok = len(header) == width and any(cell.strip() for cell in header)
+            warnings = []
+            if empty_ratio >= 0.5:
+                # Mostly-empty grids come from figures and merged layouts; formatting them as a
+                # Markdown table would lend false authority to extractor noise.
+                warnings.append(
+                    f"table_layout_unreliable: {empty_ratio:.0%} of detected cells are empty; treat"
+                    " this as a rough candidate and read the values from the page image"
+                )
+                item["text"] = "\n".join(
+                    f"{position}: " + " | ".join(row) for position, row in enumerate(rows, start=1)
+                )
+                item["table_data_row_count"] = len(rows)
+            elif header_ok:
+                if [" ".join(str(cell).split()) for cell in rows[0]] == [
+                    " ".join(cell.split()) for cell in header
+                ]:
+                    # Some extractors repeat the header as the first data row; keep it once.
+                    rows = rows[1:]
+                item["text"] = "\n".join([
+                    "| " + " | ".join(header) + " |",
+                    "| " + " | ".join("---" for _ in header) + " |",
+                    *("| " + " | ".join(row) + " |" for row in rows),
+                ])
+                item["table_data_row_count"] = len(rows)
+            else:
+                # Without an extractor-confirmed header, numbering the rows keeps their boundaries
+                # without claiming that the first row is a header.
+                item["text"] = "\n".join(
+                    f"{position}: " + " | ".join(row) for position, row in enumerate(rows, start=1)
+                )
+                item["table_data_row_count"] = len(rows)
+                warnings.append(
+                    "table_header_unverified: no confirmed header row; rows are numbered and the"
+                    " first row may be data, so verify labels before reading cell values"
+                )
+            if item.get("table_empty_cells"):
+                warnings.append(
+                    f"table_merged_cells_unresolved: {item['table_empty_cells']} empty cells may be"
+                    " merged spans; confirm each value's row and column on the page image"
+                )
+            item["table_row_count"] = len(rows) + (1 if header_ok else 0)
+            item["table_column_count"] = width
+            item["table_header"] = header if header_ok else []
             item["table_warning"] = (
-                "Table text keeps one line per detected row; cells are extractor output, so merged "
-                "cells and row spans still require source-page verification"
+                "Table text reproduces extractor cells with one line per detected row; merged cells"
+                " and row spans still require source-page verification"
             )
+            if warnings:
+                item.setdefault("warnings", []).extend(warnings)
             return _source_defaults(item)
     if item.get("original_kind") == "figure":
         item["kind"] = "figure"
@@ -193,6 +285,10 @@ def _classify(
         elif _numbered_heading(item, text, font_size_reference):
             item["kind"] = "heading"
             item["heading_level"] = _heading_level(text)
+        elif _single_letter_appendix_heading(item, text, font_size_reference):
+            item["kind"] = "heading"
+            # An appendix letter starts a new top-level section, not a subsection of References.
+            item["heading_level"] = 1
         elif re.match(r"(?i)^(?:abstract|references|acknowledg\w*|appendix)\b", text) and len(text) <= 180:
             item["kind"] = "heading"
             item["heading_level"] = 1
@@ -203,6 +299,11 @@ def _classify(
         if item["kind"] == "formula":
             match = EQUATION_NUMBER_RE.search(text)
             item["formula_number"] = match.group(1) if match else None
+            marked = normalized(item.get("text_with_scripts") or "")
+            if marked and marked != text:
+                item["text_with_scripts"] = marked
+                text = marked
+                item["formula_scripts_marked"] = True
     item["text"] = text
     return _source_defaults(item)
 
@@ -365,6 +466,160 @@ def _table_barrier_conflict(block: dict[str, Any], body: list[dict[str, Any]], w
     return conflicts
 
 
+def _bbox_union(left: list[float], right: list[float]) -> list[float]:
+    return [
+        min(left[0], right[0]),
+        min(left[1], right[1]),
+        max(left[2], right[2]),
+        max(left[3], right[3]),
+    ]
+
+
+def _block_height(block: dict[str, Any]) -> float:
+    box = block.get("bbox") or [0, 0, 0, 0]
+    return max(0.5, float(box[3]) - float(box[1]))
+
+
+def _vertical_overlap_ratio(left: dict[str, Any], right: dict[str, Any]) -> float:
+    a = left.get("bbox") or [0, 0, 0, 0]
+    b = right.get("bbox") or [0, 0, 0, 0]
+    overlap = min(float(a[3]), float(b[3])) - max(float(a[1]), float(b[1]))
+    if overlap <= 0:
+        return 0.0
+    return overlap / min(_block_height(left), _block_height(right))
+
+
+def _join_formula_fragments(members: list[dict[str, Any]]) -> str:
+    """Join one equation's fragments: rows top to bottom, fragments left to right."""
+
+    def _row_key(block: dict[str, Any]) -> tuple[float, float, float]:
+        box = block.get("bbox") or [0, 0, 0, 0]
+        baseline = (float(box[1]) + float(box[3])) / 2
+        return (round(baseline / 2.0) * 2.0, float(box[0]), float(box[2]))
+
+    rows: list[list[dict[str, Any]]] = []
+    for member in sorted(members, key=_row_key):
+        if rows and abs(_row_key(member)[0] - _row_key(rows[-1][0])[0]) <= 2.0:
+            rows[-1].append(member)
+        else:
+            rows.append([member])
+    parts: list[str] = []
+    for row in rows:
+        texts = [
+            " ".join(str(member.get("text_with_scripts") or member.get("text") or "").split())
+            for member in row
+        ]
+        row_text = " ".join(text for text in texts if text)
+        if row_text:
+            parts.append(row_text)
+    return " ".join(parts).strip()
+
+
+def _merge_formula_fragments(blocks: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Merge the glyph-cluster blocks of one displayed equation into a single block.
+
+    Mathematical typesetting commonly splits one equation into many small blocks
+    (brackets, numerators, subscripts).  Keeping them apart destroys the equation
+    and scatters the equation number, so fragments that share a horizontal band
+    and sit close together are merged in left-to-right order.  The merge never
+    invents symbols: it records how many fragments were joined and asks for a
+    page-image check when the original layout was stacked.
+    """
+    formulas = [block for block in blocks if block.get("kind") == "formula"]
+    if len(formulas) < 2:
+        return blocks
+    groups: list[dict[str, Any]] = []
+    for block in sorted(formulas, key=lambda item: ((item.get("bbox") or [0])[1], (item.get("bbox") or [0])[0])):
+        for group in groups:
+            if _vertical_overlap_ratio(block, group["anchor"]) >= 0.4:
+                group["members"].append(block)
+                group["bbox"] = _bbox_union(group["bbox"], block["bbox"])
+                break
+        else:
+            groups.append({"members": [block], "bbox": list(block.get("bbox") or [0, 0, 0, 0]), "anchor": block})
+    changed = True
+    while changed:
+        changed = False
+        for index, group in enumerate(groups):
+            for other in groups[index + 1:]:
+                overlap = _vertical_overlap_ratio({"bbox": group["bbox"]}, {"bbox": other["bbox"]})
+                if overlap >= 0.2:
+                    group["members"].extend(other["members"])
+                    group["bbox"] = _bbox_union(group["bbox"], other["bbox"])
+                    groups.remove(other)
+                    changed = True
+                    break
+            if changed:
+                break
+    grouped = {id(member) for group in groups for member in group["members"]}
+    for group in groups:
+        if len(group["members"]) < 2:
+            continue
+        top, bottom = float(group["bbox"][1]) - 2.0, float(group["bbox"][3]) + 2.0
+        for block in blocks:
+            if id(block) in grouped or block.get("kind") != "body":
+                continue
+            box = block.get("bbox") or [0, 0, 0, 0]
+            center = (float(box[1]) + float(box[3])) / 2
+            text = " ".join(str(block.get("text") or "").split())
+            if not text or len(text) > 60 or not top <= center <= bottom:
+                continue
+            if _block_height(block) > _block_height(group["anchor"]) * 1.2 + 4:
+                continue
+            gap = max(float(group["bbox"][0]) - float(box[2]), float(box[0]) - float(group["bbox"][2]))
+            if gap > 30.0:
+                continue
+            group["members"].append(block)
+            group["bbox"] = _bbox_union(group["bbox"], block["bbox"])
+            grouped.add(id(block))
+    merged: dict[int, dict[str, Any]] = {}
+    for group in groups:
+        members = group["members"]
+        if len(members) < 2:
+            continue
+        first = min(members, key=lambda item: item.get("source_order", 0))
+        text = _join_formula_fragments(members)
+        if not text:
+            continue
+        heights = {round((member.get("bbox") or [0, 0, 0, 0])[3], 1) for member in members if (member.get("text") or "").strip()}
+        warnings = list(first.get("warnings") or [])
+        warnings.append(
+            f"formula_merged_fragments: {len(members)} layout fragments joined left to right into one formula block"
+        )
+        warnings.append(
+            "formula_layout_unverified: stacked fractions and symbol-font glyphs still need a page-image check before quoting the formula"
+        )
+        if CONTROL_CHARS_RE.search(text):
+            warnings.append(
+                "symbol_font_glyphs_missing: control characters in this formula are glyphs without a Unicode mapping (usually large brackets); quote the equation number and verify the form from the page image"
+            )
+        block = dict(first)
+        block.update({
+            "kind": "formula",
+            "text": text,
+            "raw_text": text,
+            "bbox": group["bbox"],
+            "font_size_max": max((m.get("font_size_max") or 0) for m in members) or first.get("font_size_max"),
+            "warnings": warnings,
+            "merged_fragment_count": len(members),
+            "merged_fragment_ids": [m.get("raw_id") for m in members],
+            "merged_baselines": len(heights),
+        })
+        merged[id(first)] = block
+        for member in members:
+            if id(member) != id(first):
+                merged[id(member)] = None
+    if not merged:
+        return blocks
+    output: list[dict[str, Any]] = []
+    for block in blocks:
+        replacement = merged.get(id(block), block)
+        if replacement is None:
+            continue
+        output.append(replacement)
+    return output
+
+
 def _order_page(page: dict[str, Any], naive: bool) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     width = float(page.get("width") or 1)
     margins = [block for block in page.get("raw_blocks", []) if block.get("raw_kind") in {"header", "footer"}]
@@ -388,7 +643,8 @@ def _order_page(page: dict[str, Any], naive: bool) -> tuple[list[dict[str, Any]]
         block["bbox"] = [float(value) for value in block.get("bbox", [0, 0, width, page.get("height") or 1])]
     if naive:
         ordered = sorted(body, key=lambda item: (item["bbox"][1], item["bbox"][0], item.get("raw_id", "")))
-        return [*_classify_margin(headers), *ordered, *_classify_margin(footers)], {"mode": "naive", "zones": []}
+        merged = _merge_formula_fragments(ordered)
+        return [*_classify_margin(headers), *merged, *_classify_margin(footers)], {"mode": "naive", "zones": []}
 
     full = []
     for candidate in sorted((b for b in body if _full_width(b, width)), key=lambda b: (b["bbox"][1], b["bbox"][0])):
@@ -439,7 +695,8 @@ def _order_page(page: dict[str, Any], naive: bool) -> tuple[list[dict[str, Any]]
     ambiguous = any(zone.get("ambiguous") for zone in debug_zones)
     if ambiguous:
         page.setdefault("warnings", []).append("layout_ambiguous: review page image before using the coordinate fallback as verified reading order")
-    return [*_classify_margin(headers), *ordered, *_classify_margin(footers)], {"mode": "layout", "zones": debug_zones, "ambiguous": ambiguous}
+    merged = _merge_formula_fragments(ordered)
+    return [*_classify_margin(headers), *merged, *_classify_margin(footers)], {"mode": "layout", "zones": debug_zones, "ambiguous": ambiguous}
 
 
 def _classify_margin(blocks: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -464,6 +721,12 @@ def _add_section_paths(pages: list[dict[str, Any]]) -> None:
                 section_stack = [(old_level, text) for old_level, text in section_stack if old_level < level]
                 section_stack.append((level, block["text"][:160]))
             block["section_path"] = [text for _, text in section_stack]
+            if (
+                block["kind"] == "body"
+                and block["section_path"]
+                and REFERENCES_SECTION_RE.match(block["section_path"][-1])
+            ):
+                block["kind"] = "reference"
 
 
 def _continuity_candidate(previous: dict[str, Any], following: dict[str, Any]) -> dict[str, Any] | None:

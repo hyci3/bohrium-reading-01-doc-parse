@@ -360,11 +360,49 @@ class BlockClassificationTest(unittest.TestCase):
         })
         self.assertEqual(item["kind"], "table")
         self.assertEqual(item["table_row_count"], 3)
+        self.assertEqual(item["table_data_row_count"], 3)
         self.assertEqual(item["table_column_count"], 4)
         lines = item["text"].split("\n")
-        self.assertEqual(len(lines), 3)
-        self.assertEqual(lines[1], "65B | 99.3 | 4.4 | 41GB")
+        # Without a confirmed header the rows are numbered; boundaries survive, no header is claimed.
+        self.assertEqual(lines[0], "1:  | MMLU | Squad | Memory")
+        self.assertEqual(lines[1], "2: 65B | 99.3 | 4.4 | 41GB")
+        self.assertEqual(lines[2], "3: 33B | 97.8 | 4.4 | 21GB")
+        self.assertIn("table_header_unverified", " ".join(item.get("warnings", [])))
         self.assertIn("table_warning", item)
+
+    def test_table_with_confirmed_header_needs_no_header_warning(self) -> None:
+        item = _classify({
+            "text": "",
+            "original_kind": "table",
+            "rows": [["Model", "MMLU"], ["65B", "99.3"]],
+            "table_header": ["Model", "MMLU"],
+            "table_header_external": True,
+            "table_empty_cells": 1,
+        })
+        self.assertEqual(item["table_row_count"], 2)
+        self.assertEqual(item["table_data_row_count"], 1)
+        lines = item["text"].split("\n")
+        self.assertEqual(lines[0], "| Model | MMLU |")
+        self.assertEqual(lines[1], "| --- | --- |")
+        self.assertEqual(lines[2], "| 65B | 99.3 |")
+        warnings = " ".join(item.get("warnings", []))
+        self.assertNotIn("table_header_unverified", warnings)
+        self.assertIn("table_merged_cells_unresolved", warnings)
+
+    def test_mostly_empty_table_is_not_dressed_up_as_markdown(self) -> None:
+        item = _classify({
+            "text": "",
+            "original_kind": "table",
+            "rows": [["4-bit LLaMA", "", ""], ["", "", ""], ["", "Data type", ""]],
+            "table_header": ["4-bit LLaMA", "", ""],
+            "table_empty_cells": 6,
+        })
+        self.assertEqual(item["kind"], "table")
+        self.assertNotIn("| --- |", item["text"])
+        self.assertTrue(item["text"].startswith("1: 4-bit LLaMA"))
+        warnings = " ".join(item.get("warnings", []))
+        self.assertIn("table_layout_unreliable", warnings)
+        self.assertIn("table_merged_cells_unresolved", warnings)
 
 
 if __name__ == "__main__":

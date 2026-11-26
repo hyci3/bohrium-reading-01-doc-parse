@@ -13,6 +13,7 @@ from .case_io import (
     read_json,
     value_matches_type,
 )
+from .coverage import ITEM_ORDER, STATUSES
 
 
 NAME_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
@@ -196,6 +197,27 @@ def check_document_coverage(document: dict[str, Any]) -> list[str]:
     return errors
 
 
+def check_coverage_report(report: Any) -> list[str]:
+    errors: list[str] = []
+    if not isinstance(report, dict):
+        return ["coverage_report must be an object"]
+    items = report.get("items")
+    if not isinstance(items, dict):
+        return ["coverage_report.items must be an object"]
+    for name in ITEM_ORDER:
+        item = items.get(name)
+        if not isinstance(item, dict):
+            errors.append(f"coverage_report is missing item: {name}")
+            continue
+        if item.get("status") not in STATUSES:
+            errors.append(f"coverage_report item {name} has unsupported status: {item.get('status')}")
+        if not isinstance(item.get("count"), int):
+            errors.append(f"coverage_report item {name} needs an integer count")
+        if not isinstance(item.get("pages"), list) or not isinstance(item.get("block_ids"), list):
+            errors.append(f"coverage_report item {name} needs pages and block_ids lists")
+    return errors
+
+
 def validate_result_object(
     plan: dict[str, Any], document: dict[str, Any], result: dict[str, Any]
 ) -> dict[str, Any]:
@@ -225,6 +247,8 @@ def validate_result_object(
     errors.extend(validate_sources(result.get("sources", []), document))
     coverage_errors = check_document_coverage(document)
     errors.extend(coverage_errors)
+    if "coverage_report" in result:
+        errors.extend(check_coverage_report(result.get("coverage_report")))
     if result.get("status") == "success":
         if not result.get("sources"):
             errors.append("A successful evidence-linked result must contain sources")

@@ -16,6 +16,7 @@ from pdf_evidence.case_io import inspect_case_command
 from pdf_evidence.probe import probe_pdf_command
 from pdf_evidence.extractors import extract_command
 from pdf_evidence.context import select_context_command
+from pdf_evidence.coverage import coverage_report_command
 from pdf_evidence.result_io import finalize_result_command
 from pdf_evidence.validators import evaluate_order_command, validate_package_command, validate_result_command
 
@@ -72,6 +73,10 @@ def build_parser() -> argparse.ArgumentParser:
     command.add_argument("--segments-dir")
     command.add_argument("--glossary")
 
+    command = subparsers.add_parser("coverage-report", help="Report which document structures are actually present")
+    command.add_argument("--document", required=True)
+    command.add_argument("--output", required=True)
+
     command = subparsers.add_parser("finalize-result", help="Merge an actual answer with evidence and contract fields")
 
     command.add_argument("--plan", required=True)
@@ -112,6 +117,8 @@ def main(argv: list[str] | None = None) -> int:
                 args.max_tokens, args.query, args.page, args.section, args.block_id, args.cursor,
                 args.usage_event, args.full_document, args.segments_dir, args.glossary,
             )
+        if args.command == "coverage-report":
+            return coverage_report_command(args.document, args.output)
         if args.command == "finalize-result":
             return finalize_result_command(args.plan, args.document, args.answer, args.output, args.segments_dir, args.merge_output)
         if args.command == "validate-result":

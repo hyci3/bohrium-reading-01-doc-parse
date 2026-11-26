@@ -80,7 +80,7 @@ python evidence-pdf-reader/scripts/run.py validate-package --skill-dir evidence-
 python evidence-pdf-reader/scripts/run.py capabilities --output "$workDir/capabilities.json"
 ```
 
-预期 `package-validation.json` 中 `valid=true`，且命令输出 `package_valid=True`。正式资源包当前包含 18 个文件，总计 192081 字节；后续合法变更可能改变这些数字，但始终要满足最多 50 个 UTF-8 文本文件、单文件不超过 500 KB、总量不超过 2 MB、无符号链接的限制。
+预期 `package-validation.json` 中 `valid=true`，且命令输出 `package_valid=True`。正式资源包当前包含 21 个文件，总计 243760 字节；后续合法变更可能改变这些数字，但始终要满足最多 50 个 UTF-8 文本文件、单文件不超过 500 KB、总量不超过 2 MB、无符号链接的限制。
 
 检查 `capabilities.json`：
 
@@ -218,4 +218,4 @@ python "$skillDir/scripts/run.py" validate-result --plan "$workDir/case-plan.jso
 
 `docs/`、`tests/`、`requirements.txt`、`requirements-dev.txt` 和开发记录留在开发仓库。正式 submission 只包含经过审查的 `evidence-pdf-reader/` 资源内容，不带测试夹具、真实开发 PDF、模型、沙箱日志、缓存、能力清单或模拟原生轨迹。
 
-完整开发测试从仓库根目录运行，需要先按 `tests/fixtures/manifest.json` 准备测试材料及真实 PDF；不能假设只安装资源包就会包含测试输入。当前工作区最后一次全量验证为 84 项测试通过，该结果用于当前提交审查，不替代目标环境的最小部署验收。
+完整开发测试从仓库根目录运行，需要先按 `tests/fixtures/manifest.json` 准备测试材料及真实 PDF；不能假设只安装资源包就会包含测试输入。当前工作区最后一次全量验证为 89 项测试通过，该结果用于当前提交审查，不替代目标环境的最小部署验收。

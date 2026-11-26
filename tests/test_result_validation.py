@@ -4,6 +4,7 @@ import unittest
 
 from tests._support import TEST_WORK
 from pdf_evidence.case_io import atomic_write_json, empty_result, error_record, read_json
+from pdf_evidence.coverage import ITEM_ORDER, build_coverage_report
 from pdf_evidence.result_io import finalize_result_command
 from pdf_evidence.validators import validate_result_command, validate_result_object
 
@@ -142,6 +143,122 @@ class ResultValidationTest(unittest.TestCase):
         report = validate_result_object(self.plan, self.document, result)
         self.assertFalse(report["valid"])
         self.assertTrue(any("must contain sources" in message for message in report["errors"]))
+
+    def test_finalize_writes_structural_coverage_report(self) -> None:
+        self.write_answer()
+        initial = empty_result(self.plan["case_id"], self.plan["output_contract"], [])
+        atomic_write_json(self.result_path, initial)
+        self.assertEqual(finalize_result_command(self.plan_path, self.document_path, self.answer_path, self.result_path), 0)
+        result = read_json(self.result_path)
+        report = result["coverage_report"]
+        self.assertEqual(set(report["items"]), set(ITEM_ORDER))
+        self.assertEqual(report["method"], "deterministic_heuristics_from_document_json")
+        self.assertEqual(sum(report["totals"].values()), len(ITEM_ORDER))
+        self.assertTrue(validate_result_object(self.plan, self.document, result)["valid"])
+
+
+class CoverageReportTest(unittest.TestCase):
+    """The ten-item structural report must be decided from the document alone."""
+
+    def _document(self):
+        return {
+            "schema_version": "1.0",
+            "page_count": 2,
+            "pages": [
+                {
+                    "page_number": 1,
+                    "width": 600,
+                    "height": 800,
+                    "status": "complete",
+                    "blocks": [
+                        {"block_id": "p0001-b0001", "page_number": 1, "kind": "body", "text": "A Study of Columns",
+                         "bbox": [40, 40, 560, 80], "font_size_max": 18.0, "font_bold": True, "page_reading_order": 1},
+                        {"block_id": "p0001-b0002", "page_number": 1, "kind": "body",
+                         "text": "Ada Lovelace, University of London", "bbox": [40, 90, 560, 106], "page_reading_order": 2},
+                        {"block_id": "p0001-b0003", "page_number": 1, "kind": "heading", "text": "Abstract",
+                         "bbox": [40, 120, 200, 136], "page_reading_order": 3},
+                        {"block_id": "p0001-b0004", "page_number": 1, "kind": "body", "text": "We study columns.",
+                         "bbox": [40, 140, 560, 170], "page_reading_order": 4},
+                        {"block_id": "p0001-b0005", "page_number": 1, "kind": "heading", "text": "1 Introduction",
+                         "bbox": [40, 190, 300, 206], "page_reading_order": 5, "section_path": ["1 Introduction"]},
+                        {"block_id": "p0001-b0006", "page_number": 1, "kind": "heading", "text": "1.1 Method",
+                         "bbox": [40, 220, 300, 236], "page_reading_order": 6,
+                         "section_path": ["1 Introduction", "1.1 Method"]},
+                        {"block_id": "p0001-b0007", "page_number": 1, "kind": "header", "text": "Preprint",
+                         "bbox": [40, 10, 200, 20], "page_reading_order": 7},
+                        {"block_id": "p0001-b0008", "page_number": 1, "kind": "reference",
+                         "text": "[1] A. Author. A paper. 2020.", "bbox": [40, 400, 560, 420], "page_reading_order": 8},
+                        {"block_id": "p0001-b0009", "page_number": 1, "kind": "reference",
+                         "text": "[2] B. Author. Another paper. 2021.", "bbox": [40, 420, 560, 440], "page_reading_order": 9},
+                    ],
+                },
+                {
+                    "page_number": 2,
+                    "width": 600,
+                    "height": 800,
+                    "status": "complete",
+                    "blocks": [
+                        {"block_id": "p0002-b0001", "page_number": 2, "kind": "figure", "text": "",
+                         "bbox": [40, 40, 560, 300], "page_reading_order": 1},
+                        {"block_id": "p0002-b0002", "page_number": 2, "kind": "figure_caption",
+                         "text": "Figure 1: Overview of the method.", "bbox": [40, 300, 560, 316], "page_reading_order": 2},
+                        {"block_id": "p0002-b0003", "page_number": 2, "kind": "table",
+                         "text": "7B | 99.3 | 41GB", "bbox": [40, 340, 560, 400], "page_reading_order": 3,
+                         "table_row_count": 1, "table_column_count": 3},
+                        {"block_id": "p0002-b0004", "page_number": 2, "kind": "table_caption",
+                         "text": "Table 1: Results.", "bbox": [40, 320, 560, 336], "page_reading_order": 4},
+                        {"block_id": "p0002-b0005", "page_number": 2, "kind": "formula",
+                         "text": "L = L0 + α x (3)", "bbox": [40, 420, 560, 440], "page_reading_order": 5},
+                        {"block_id": "p0002-b0006", "page_number": 2, "kind": "footer", "text": "1",
+                         "bbox": [40, 780, 560, 795], "page_reading_order": 6},
+                        {"block_id": "p0002-b0007", "page_number": 2, "kind": "body",
+                         "text": "1 See the appendix for the derivation.", "bbox": [40, 730, 560, 745],
+                         "page_reading_order": 7},
+                    ],
+                },
+            ],
+        }
+
+    def test_items_are_decided_from_blocks_and_geometry(self) -> None:
+        report = build_coverage_report(self._document())
+        items = report["items"]
+        self.assertEqual(list(items), list(ITEM_ORDER))
+        self.assertEqual(items["title"]["status"], "present")
+        self.assertEqual(items["title"]["pages"], [1])
+        self.assertEqual(items["authors_and_affiliations"]["status"], "present")
+        self.assertEqual(items["abstract"]["status"], "present")
+        self.assertEqual(items["section_hierarchy"]["status"], "present")
+        self.assertEqual(items["figures_and_captions"]["status"], "present")
+        self.assertEqual(items["tables_and_captions"]["status"], "present")
+        self.assertEqual(items["formula_numbers"]["status"], "present")
+        self.assertEqual(items["references"]["status"], "partial")
+        self.assertEqual(items["headers_and_footers"]["status"], "present")
+        self.assertEqual(items["footnotes"]["status"], "present")
+        self.assertIn(1, items["headers_and_footers"]["pages"])
+        self.assertIn(2, items["footnotes"]["pages"])
+
+    def test_missing_structures_are_reported_as_gaps_not_invented(self) -> None:
+        document = {
+            "schema_version": "1.0",
+            "page_count": 1,
+            "pages": [{
+                "page_number": 1,
+                "width": 600,
+                "height": 800,
+                "status": "complete",
+                "blocks": [{"block_id": "p0001-b0001", "page_number": 1, "kind": "body",
+                            "text": "Plain paragraph without any structure.", "bbox": [40, 40, 560, 60]}],
+            }],
+        }
+        report = build_coverage_report(document)
+        self.assertEqual(report["items"]["figures_and_captions"]["status"], "absent")
+        self.assertEqual(report["items"]["tables_and_captions"]["status"], "absent")
+        self.assertEqual(report["items"]["references"]["status"], "absent")
+        self.assertEqual(report["items"]["footnotes"]["status"], "uncertain")
+        gap_names = {gap["item"] for gap in report["gaps"]}
+        self.assertIn("figures_and_captions", gap_names)
+        self.assertIn("references", gap_names)
+        self.assertTrue(all(gap["action"] for gap in report["gaps"]))
 
 
 if __name__ == "__main__":

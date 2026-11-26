@@ -58,9 +58,13 @@ class RealReadingOrderTest(unittest.TestCase):
     def test_single_column_overlapping_formula_stays_in_its_section(self) -> None:
         page = read_json(self.attention_layout)["pages"][4]
         by_id = {block["raw_id"]: index for index, block in enumerate(page["blocks"])}
-        self.assertLess(by_id["r0007"], by_id["r0011"])
-        self.assertLess(by_id["r0008"], by_id["r0011"])
-        self.assertLess(by_id["r0009"], by_id["r0011"])
+        # Formula fragments are merged into the first fragment's block, so the merged equation keeps
+        # the position of its first fragment and stays before the following paragraph.
+        merged = [block_id for block_id in ("r0003", "r0007") if block_id in by_id]
+        self.assertTrue(merged, "the merged equation block must keep the first fragment's id")
+        for block_id in merged:
+            self.assertLess(by_id[block_id], by_id["r0011"])
+        self.assertLess(by_id["r0000"], by_id["r0003"])
         self.assertLess(by_id["r0018"], by_id["r0019"])
         self.assertLess(by_id["r0019"], by_id["r0020"])
 

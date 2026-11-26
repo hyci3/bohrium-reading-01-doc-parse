@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from math import isfinite
@@ -9,7 +10,7 @@ from typing import Any
 from .case_io import atomic_write_json, error_record, read_json
 from .probe import local_name, run_to_log
 from .poppler_xml import has_illegal_xml_control, page_control_warning, parse_poppler_bbox
-from .reading_order import order_pages
+from .reading_order import _bbox_union, _has_inline_sentence, _vertical_overlap_ratio, order_pages
 
 
 def _bbox(items: list[dict[str, Any]]) -> list[float]:
@@ -21,28 +22,76 @@ def _bbox(items: list[dict[str, Any]]) -> list[float]:
     ]
 
 
+def _span_texts(spans: list[dict[str, Any]]) -> tuple[str, str, list[dict[str, Any]]]:
+    """Return (plain text, text with script markers, recorded script spans).
+
+    A superscript or subscript is only marked when the span is smaller than the
+    line font *and* its baseline is shifted; small capitals keep the same
+    baseline and therefore stay plain text.
+    """
+    plain = "".join(str(span.get("text") or "") for span in spans)
+    sizes = [float(span.get("size") or 0) for span in spans if span.get("text")]
+    base = max(sizes) if sizes else 0.0
+    baselines = [
+        float((span.get("origin") or [0, 0])[1])
+        for span in spans
+        if span.get("text") and float(span.get("size") or 0) >= base * 0.95
+    ]
+    reference = median(baselines) if baselines else None
+    parts: list[str] = []
+    scripts: list[dict[str, Any]] = []
+    for span in spans:
+        text = str(span.get("text") or "")
+        if not text:
+            continue
+        size = float(span.get("size") or 0)
+        baseline = float((span.get("origin") or [0, 0])[1])
+        core = text.strip()
+        script = None
+        if reference is not None and base and size < base * 0.85 and 0 < len(core) <= 12 and " " not in core:
+            if baseline <= reference - base * 0.12:
+                script = "superscript"
+            elif baseline >= reference + base * 0.12:
+                script = "subscript"
+        if script == "superscript":
+            parts.append("^{" + core + "}" + text[len(text.rstrip()):])
+        elif script == "subscript":
+            parts.append("_{" + core + "}" + text[len(text.rstrip()):])
+        else:
+            parts.append(text)
+        if script:
+            scripts.append({"text": core, "script": script, "size": round(size, 2)})
+    return plain, "".join(parts), scripts
+
+
 def _pymupdf_page(page: Any, table_diagnostics: list[str] | None = None) -> list[dict[str, Any]]:
     blocks: list[dict[str, Any]] = []
     data = page.get_text("dict")
     for block in data.get("blocks", []):
         if block.get("type") == 0:
-            line_texts: list[str] = []
+            plain_lines: list[str] = []
+            marked_lines: list[str] = []
+            block_scripts: list[dict[str, Any]] = []
             font_sizes: list[float] = []
             bold = False
             for line in block.get("lines", []):
                 spans = line.get("spans", [])
-                line_texts.append("".join(span.get("text", "") for span in spans))
+                plain, marked, scripts = _span_texts(spans)
+                plain_lines.append(plain)
+                marked_lines.append(marked)
+                block_scripts.extend(scripts)
                 for span in spans:
                     if span.get("text"):
                         font_sizes.append(float(span.get("size", 0)))
                         font_name = str(span.get("font", "")).lower()
                         bold = bold or "bold" in font_name or bool(int(span.get("flags", 0)) & 16)
-            text = "\n".join(value for value in line_texts if value)
+            text = "\n".join(value for value in plain_lines if value)
+            marked_text = "\n".join(value for value in marked_lines if value)
             if not text.strip():
                 continue
             bbox = [float(value) for value in block.get("bbox", [0, 0, 0, 0])]
             raw_id = f"r{len(blocks):04d}"
-            blocks.append({
+            entry = {
                 "raw_id": raw_id,
                 "bbox": bbox,
                 "raw_text": text,
@@ -52,7 +101,13 @@ def _pymupdf_page(page: Any, table_diagnostics: list[str] | None = None) -> list
                 "raw_kind": "body",
                 "font_size_max": max(font_sizes) if font_sizes else None,
                 "font_bold": bold,
-            })
+            }
+            if block_scripts:
+                # Prose keeps plain text so quotes stay copy-pasteable; formulas switch to the marked
+                # text during classification, where superscripts carry meaning.
+                entry["text_with_scripts"] = marked_text
+                entry["scripts"] = block_scripts
+            blocks.append(entry)
         elif block.get("type") == 1:
             blocks.append({
                 "raw_id": f"r{len(blocks):04d}",
@@ -70,8 +125,20 @@ def _pymupdf_page(page: Any, table_diagnostics: list[str] | None = None) -> list
     try:
         finder = page.find_tables()
         for table in getattr(finder, "tables", []):
-            rows = table.extract()
-            text = "\n".join(" | ".join("" if cell is None else str(cell) for cell in row) for row in rows)
+            rows = [
+                ["" if cell is None else " ".join(str(cell).split()) for cell in row]
+                for row in table.extract()
+            ]
+            text = "\n".join(" | ".join(row) for row in rows)
+            header: list[str] = []
+            external_header = False
+            try:
+                names = getattr(getattr(table, "header", None), "names", None) or []
+                header = [" ".join(str(name).split()) for name in names if name is not None]
+                external_header = bool(getattr(table.header, "external", False))
+            except Exception:
+                header = []
+                external_header = False
             blocks.append({
                 "raw_id": f"rt{len(blocks):04d}",
                 "bbox": [float(value) for value in table.bbox],
@@ -81,6 +148,9 @@ def _pymupdf_page(page: Any, table_diagnostics: list[str] | None = None) -> list
                 "original_kind": "table",
                 "raw_kind": "body",
                 "rows": rows,
+                "table_header": header,
+                "table_header_external": external_header,
+                "table_empty_cells": sum(1 for row in rows for cell in row if not cell),
                 "table_warning": "Table structure is extractor output and still requires source verification for merged cells",
                 "table_candidate": True,
                 "requires_visual_review": True,
@@ -278,6 +348,60 @@ def _wrapped_text_partition(
     return None
 
 
+def _rejoin_split_numbering(blocks: list[dict[str, Any]], page_width: float | None) -> list[dict[str, Any]]:
+    """Rejoin a heading whose number Poppler emitted as its own block.
+
+    Poppler breaks a block wherever the font changes, so ``1`` and ``Introduction`` arrive as two
+    blocks on one baseline. Left unjoined, the heading is classified as body text and every block
+    after it inherits the wrong section path.
+    """
+    if page_width is None or len(blocks) < 2:
+        return blocks
+    numbering = re.compile(r"^(?:\d+(?:\.\d+)*|[A-Z](?:\.\d+)+)$")
+    heading_start = re.compile(r"^[A-Z][A-Za-z]")
+    output: list[dict[str, Any]] = []
+    index = 0
+    while index < len(blocks):
+        current = blocks[index]
+        if index + 1 < len(blocks):
+            following = blocks[index + 1]
+            left = " ".join(str(current.get("text", "")).split())
+            right = " ".join(str(following.get("text", "")).split())
+            same_line = _vertical_overlap_ratio(current, following) >= 0.6
+            gap = float(following["bbox"][0]) - float(current["bbox"][2])
+            narrow = float(current["bbox"][2]) - float(current["bbox"][0]) <= page_width * 0.08
+            if (
+                same_line
+                and numbering.match(left)
+                and heading_start.match(right)
+                and narrow
+                and -1.0 <= gap <= page_width * 0.03
+                and len(right) <= 120
+                and len(right.split()) <= 12
+                and "://" not in right
+                and not _has_inline_sentence(right)
+                and not right.endswith((".", "。", "!", "?", ":", "：", ";", "；"))
+            ):
+                merged = dict(current)
+                merged["text"] = f"{left} {right}"
+                merged["raw_text"] = merged["text"]
+                merged["bbox"] = _bbox_union(current["bbox"], following["bbox"])
+                merged["source_order"] = min(current["source_order"], following["source_order"])
+                merged["rejoined_from"] = [current["raw_id"], following["raw_id"]]
+                merged.setdefault("warnings", []).append(
+                    "poppler_split_numbering_rejoined: the heading number and its title were separate"
+                    " layout blocks on one baseline; verify the heading on the page image"
+                )
+                output.append(merged)
+                index += 2
+                continue
+        output.append(current)
+        index += 1
+    for position, block in enumerate(output):
+        block["source_order"] = position
+    return output
+
+
 def _poppler_page(page: ET.Element) -> list[dict[str, Any]]:
     output: list[dict[str, Any]] = []
     try:
@@ -363,7 +487,7 @@ def _poppler_page(page: ET.Element) -> list[dict[str, Any]]:
             if warnings:
                 block["warnings"] = warnings
             output.append(block)
-    return output
+    return _rejoin_split_numbering(output, page_width)
 
 
 def _render_page(

@@ -555,3 +555,16 @@ git status --short
 回归过程中还暴露出一处预算缺陷：文档索引按页裁剪时，裁剪计数器与警告本身也占 token，写出后索引会略微越过 12000 的索引预算（真实 attention 文档实测 12028）。裁剪改为每步重测、必要时继续丢弃可选段落（渲染页清单、标题候选），并新增“特殊区块裁剪后必须落在预算内”的测试。
 
 回归：新增 5 项测试（编号句与续行不作标题、公式碎片归为 formula、数字表行不判公式、附录标题级别与章节路径、表格逐行文本与行列数），全量 unittest 84 项通过。三篇论文用新文档重跑 `finalize-result` 与 `validate-result` 全部 `valid=true`，独立引文回查 0 未命中。`validate-package` 通过：18 个文件、192081 字节、0 错误 0 警告。
+
+### 11.5 2026-11-26 官方评测 60 分后的补齐（覆盖清单、公式合并、表格结构、文档层）
+
+官方 challenge `01-61456272` 第一次有效提交得 60/100（`harbor_reward=0.6`、`trace_factor=1`，评语 `Solid — refine for a more complete and rigorous solution`；同题当时最高 72.67）。评分表把「结果完整性」明确拆成标题、作者与单位、摘要、章节层级、图表与题注、公式编号、参考文献、页眉页脚、脚注十项，而此前结果只有抽象计数，没有逐项清单；公式与表格也仍以「碎片 + 警告」交付。用户要求只剩三次提交额度，因此本轮按一次性补齐执行。
+
+1. 新增 `scripts/pdf_evidence/coverage.py` 与第 10 个命令 `coverage-report`：按确定性启发式给出十项结构清单，每项标 `present`/`partial`/`uncertain`/`absent`，附块数、页码、块 ID 与缺口建议；`finalize-result` 自动写入 `result.json` 的 `coverage_report`，`validate-result` 校验其完整性与状态合法性。
+2. 公式：同一基线相邻碎片按行序合并为一个 `formula` 区块，上下标按字号与基线偏移标成 `^{...}`/`_{...}`，记录 `merged_fragment_count`、`merged_fragment_ids`、`merged_baselines`，并保留 `formula_layout_unverified`、`symbol_font_glyphs_missing` 等警告；正文引文仍使用纯文本，只有公式块改用标记文本。
+3. 表格：确认表头时输出 Markdown（`table_row_count` 含表头、`table_data_row_count` 只算数据行），未确认表头时输出编号行并附 `table_header_unverified`，空格占比过半时判定布局不可靠并附 `table_layout_unreliable`，另记 `table_merged_cells_unresolved`。
+4. 标题与目录：标题判定先剥离编号再判断内联句，避免 `1. Introduction` 被自身句点误杀；单字母附录标题（`A Some Title`）需加粗或字号不低于参考字号 1.05 倍；参考文献小节之后的正文块改标为 `reference`。
+5. Poppler 回退：新增「编号块 + 标题块」合并（`poppler_split_numbering_rejoined`），QLoRA 的 heading 由 6 个恢复为 15 个。
+6. 文档层：新增资源包 `README.md`（三处技术增量、快速开始、命令与退出码、输出契约、边界）与 `references/benchmark.md`（9 篇论文 250 页、13 次后端运行、修复前后对比、独立复核命令、已知失败模式），`SKILL.md` 增加 `coverage-report` 与预算三档说明，`runtime-contract.md` 增加 OCR 接管清单，`layout-policy.md` 同步表格三出口与公式合并字段。
+
+回归：全量 unittest **89 项通过**；三篇论文（SAM、LLaMA 2、QLoRA）PyMuPDF 复跑误判标题合计 20 处归零、被污染章节路径 3 处归零、表格行边界 24/24、36/36、1/1 保留，`finalize-result` 与 `validate-result` 全部 `valid=true`，独立引文回查 87 条 0 未命中；`validate-package` 通过：**21 个文件、243760 字节、0 错误 0 警告**。

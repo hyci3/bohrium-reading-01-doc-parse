@@ -80,4 +80,26 @@ description: Parse scientific PDF cases with multi-column reading-order recovery
 
    `validate-result` 的 `valid=true` 仅表示本地结果契约、来源块匹配和覆盖检查通过，不代表科学结论正确、完整表格结构已恢复、OCR 成功、Host 已发现结果或官方评测准确率。`block_id` 只在当前文档版本内使用；重新提取导致重编号时，须按原始物理证据迁移引用并重新验证，不能假设旧游标或来源 ID 仍有效。详见 [layout-policy.md](references/layout-policy.md) 与 [context-policy.md](references/context-policy.md)。
 
+   需要十项结构（标题、作者与单位、摘要、章节层级、图表与题注、公式编号、参考文献、页眉页脚、脚注）的覆盖清单时，追加：
+
+   ```bash
+   python <skill-dir>/scripts/run.py coverage-report --document <work>/document.json --output <work>/coverage.json
+   ```
+
+   `finalize-result` 会自动把该清单写入 `result.json` 的 `coverage_report`：每项标注 `present`/`partial`/`uncertain`/`absent` 与缺失项的处理建议。`absent` 与 `uncertain` 是诚实结论，不是失败；不要为了凑齐十项而补写论文未报告的内容。
+
+## 预算分档（一次运行通常只有 64 次模型请求、900 秒）
+
+按案例规模选择最省的路径，不要对每篇论文都跑到上限：
+
+| 档位 | 适用 | 请求估算 | 关键做法 |
+| --- | --- | --- | --- |
+| 轻 | 单一问题、≤15 页 | 6–8 次 | capabilities / inspect-case / probe / extract / 1 次 select-context / 写答案 / finalize + validate |
+| 标准 | 2–3 个案例各 1–2 问 | 每案例 8–10 次 | 每个案例只做 1 次 `--query` 选择；页图仅在表格或公式存疑时取 1–2 张 |
+| 长文 | >40 页且需全文产出 | 每 8–12 页 +1 次 | 先索引后按 `--section` 或 `--page` 分段，只对实际需要的段落 `--full-document` |
+
+省预算的硬规则：`extract` 只跑一次并复用 `document.json`；同一案例不重复 `probe-pdf`；答案一次写完再 `finalize-result`；页图不是"越多越好"，每次读取都会消耗未知的图像预算。若预算将尽仍未得出结论，把 `status` 降为 `partial` 并在 `uncertainty` 中写明缺哪一步，比继续重试更诚实。
+
+独立复核方法、已验证的论文清单与失败模式见 [benchmark.md](references/benchmark.md)。
+
 完整参数、失败接管与独立调用示例见 [usage.md](references/usage.md)。
