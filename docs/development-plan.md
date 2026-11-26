@@ -579,4 +579,6 @@ git status --short
 4. `finalize-result` 不再丢弃契约外的答案字段：未知字段写入结果顶层并记 `extra_answer_fields`，避免平台契约与我们解析口径不一致时整份答案被清空。
 5. `SKILL.md` 把最快路径前置为 4–5 步，并逐条对应题面四问（提得全 / 排得对 / 拆得清 / 核得回）；预算分档表同步为 `auto` 口径。
 
-回归：新增 6 项测试（缺契约推断、case_id 推断、同目录 PDF 发现、契约等价形态、契约外字段保留、`auto` 正常与失败两条路径），全量 unittest **95 项通过**；`validate-package` 通过：**22 个文件、257766 字节、0 错误 0 警告**。
+回归：新增 6 项测试（缺契约推断、case_id 推断、同目录 PDF 发现、契约等价形态、契约外字段保留、`auto` 正常与失败两条路径），全量 unittest **96 项通过**；`validate-package` 通过：**22 个文件、259131 字节、0 错误 0 警告**。
+
+同轮补充的输入容错（依据本地对评测器调用形态的复现）：`answer.json` 把 `uncertainty`、`errors` 或 `sources` 写成标量时，`finalize-result` 不再整份拒绝（原退出码 8 会让评测方拿不到任何结果），而是包装为单元素列表并记 `coerced_answer_fields`；若 `status=success` 但仍带未解决错误，则降级为 `partial` 并追加变更记录，而不是以「自相矛盾」为由失败。复现流程用默认解释器（无 PyMuPDF）加 Poppler 走通 26 页：`auto_status=ready`、598 块、coverage 8 present/2 partial、`validate-result` 通过。

@@ -171,6 +171,18 @@ class ResultValidationTest(unittest.TestCase):
         self.assertTrue(validate_result_object(self.plan, self.document, result)["valid"])
 
 
+    def test_scalar_uncertainty_and_errors_are_coerced_instead_of_rejected(self) -> None:
+        self.write_answer(uncertainty="Only one measurement was reported.", errors="Section 3 was not read")
+        code = finalize_result_command(self.plan_path, self.document_path, self.answer_path, self.result_path)
+        self.assertEqual(code, 0)
+        result = read_json(self.result_path)
+        self.assertEqual(result["uncertainty"], ["Only one measurement was reported."])
+        self.assertEqual(result["errors"], ["Section 3 was not read"])
+        self.assertEqual(result["coerced_answer_fields"], ["errors", "uncertainty"])
+        self.assertEqual(result["status"], "partial")
+        self.assertTrue(validate_result_object(self.plan, self.document, result)["valid"])
+
+
 class CoverageReportTest(unittest.TestCase):
     """The ten-item structural report must be decided from the document alone."""
 

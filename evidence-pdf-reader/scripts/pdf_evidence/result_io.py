@@ -32,6 +32,21 @@ def _enrich_sources(sources: Any, document: dict[str, Any]) -> list[Any]:
     return enriched
 
 
+
+def _as_list(value: Any, field: str) -> list[Any]:
+    """Accept a scalar or mapping where a list is expected, and say so in the result."""
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return value
+    if isinstance(value, (str, int, float, dict)) and not isinstance(value, bool):
+        return [value]
+    if isinstance(value, bool):
+        return [value]
+    return [value]
+
+
+
 def finalize_result_command(
     plan_path: str | Path,
     document_path: str | Path,
@@ -107,16 +122,23 @@ def finalize_result_command(
     result["case_id"] = plan.get("case_id")
     default_status = "success" if merged and merged["complete"] else "partial"
     result["status"] = answer.get("status", default_status)
+    coerced_fields: list[str] = []
     sources = answer.get("sources", answer.get("evidence"))
     if sources is None:
         sources = merged["sources"] if merged else []
     if not isinstance(sources, list):
-        raise ValueError("answer.sources must be a list")
+        sources = _as_list(sources, "sources")
+        coerced_fields.append("sources")
     result["sources"] = _enrich_sources(sources, document)
-    result["uncertainty"] = answer.get("uncertainty", [])
+    uncertainty = answer.get("uncertainty", [])
+    if not isinstance(uncertainty, list):
+        uncertainty = _as_list(uncertainty, "uncertainty")
+        coerced_fields.append("uncertainty")
+    result["uncertainty"] = uncertainty
     answer_errors = answer.get("errors", [])
     if not isinstance(answer_errors, list):
-        raise ValueError("answer.errors must be a list")
+        answer_errors = _as_list(answer_errors, "errors")
+        coerced_fields.append("errors")
     prior_errors = result.get("errors", [])
     result["errors"] = [
         item for item in prior_errors if isinstance(item, dict) and item.get("kind") != "pending_processing"
@@ -142,6 +164,15 @@ def finalize_result_command(
     if "coverage" in document:
         result["coverage"] = document["coverage"]
     result["coverage_report"] = build_coverage_report(document)
+    if coerced_fields:
+        result["coerced_answer_fields"] = sorted(coerced_fields)
+    if result.get("status") == "success" and result.get("errors"):
+        result["status"] = "partial"
+        result["change_records"].append({
+            "sequence": len(result["change_records"]) + 1,
+            "stage": "finalize-result",
+            "description": "Downgraded status from success to partial because the answer still reports unresolved errors",
+        })
     if merged:
         result["context"] = {
             **result.get("context", {}),
