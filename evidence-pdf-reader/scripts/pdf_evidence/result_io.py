@@ -6,6 +6,7 @@ from typing import Any
 from .context import merge_segment_results
 from .coverage import build_coverage_report, summarize_coverage
 from .case_io import (
+    METADATA_FIELDS,
     atomic_write_json,
     decode_contract,
     error_record,
@@ -93,6 +94,16 @@ def finalize_result_command(
     for name in fields:
         if name in provided_fields:
             result[name] = provided_fields[name]
+    extra_fields = {
+        name: value
+        for name, value in provided_fields.items()
+        if name not in fields and name not in METADATA_FIELDS and name != "fields"
+    }
+    if extra_fields:
+        for name, value in extra_fields.items():
+            if result.get(name) is None:
+                result[name] = value
+        result["extra_answer_fields"] = sorted(extra_fields)
     result["case_id"] = plan.get("case_id")
     default_status = "success" if merged and merged["complete"] else "partial"
     result["status"] = answer.get("status", default_status)

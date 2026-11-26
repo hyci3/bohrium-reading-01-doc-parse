@@ -53,12 +53,41 @@ class CaseContractTest(unittest.TestCase):
         errors = read_json(early_path)["errors"]
         self.assertTrue(any(error["kind"] == "material_missing" for error in errors))
 
-    def test_missing_contract_is_rejected(self) -> None:
+    def test_missing_contract_is_inferred_without_failing(self) -> None:
         case = dict(self.base_case)
         case.pop("output_contract")
-        code, _, early_path = self.call_inspect(case, "missing-contract")
-        self.assertEqual(code, 4)
-        self.assertTrue(any(error["kind"] == "invalid_contract" for error in read_json(early_path)["errors"]))
+        code, plan_path, early_path = self.call_inspect(case, "missing-contract")
+        self.assertEqual(code, 0)
+        plan = read_json(plan_path)
+        self.assertEqual(plan["status"], "ready")
+        self.assertTrue(any(item["kind"] == "inferred_contract" for item in plan["warnings"]))
+        self.assertEqual(plan["output_contract"]["required"], ["answer"])
+        self.assertIn("answer", read_json(early_path))
+
+    def test_case_id_is_inferred_from_the_case_file_name(self) -> None:
+        case = dict(self.base_case)
+        case.pop("case_id")
+        code, plan_path, _ = self.call_inspect(case, "no-case-id")
+        self.assertEqual(code, 0)
+        plan = read_json(plan_path)
+        self.assertEqual(plan["case_id"], "no-case-id-case")
+        self.assertTrue(any(item["kind"] == "inferred_case_id" for item in plan["warnings"]))
+
+    def test_pdf_next_to_case_file_is_discovered(self) -> None:
+        case_file = self.root / "nearby" / "case.json"
+        case_file.parent.mkdir(parents=True, exist_ok=True)
+        (case_file.parent / "paper.pdf").write_bytes(self.pdf_file.read_bytes())
+        case_file.write_text(json.dumps({"case_id": "nearby-case", "output_contract": {"fields": {"answer": "string"}}}), encoding="utf-8")
+        plan = self.root / "nearby-plan.json"
+        early = self.root / "nearby-result.json"
+        code = inspect_case_command(
+            str(case_file), str(self.task_file), None, str(self.root / "work"), str(plan), str(early)
+        )
+        self.assertEqual(code, 0)
+        plan_data = read_json(plan)
+        self.assertEqual(len(plan_data["pdfs"]), 1)
+        self.assertTrue(plan_data["pdfs"][0]["path"].endswith("paper.pdf"))
+        self.assertTrue(any(item["kind"] == "inferred_pdf_material" for item in plan_data["warnings"]))
 
     def test_metadata_collision_is_rejected(self) -> None:
         case = json.loads(json.dumps(self.base_case))
@@ -66,6 +95,19 @@ class CaseContractTest(unittest.TestCase):
         code, _, early_path = self.call_inspect(case, "collision")
         self.assertEqual(code, 4)
         self.assertTrue(any("reserved result metadata" in error["message"] for error in read_json(early_path)["errors"]))
+
+    def test_alternative_contract_shapes_are_supported(self) -> None:
+        fields, required, errors = decode_contract({"outputs": {"answer": "string", "score": "number"}})
+        self.assertEqual(errors, [])
+        self.assertEqual(set(fields), {"answer", "score"})
+        self.assertEqual(fields["score"]["type"], "number")
+        self.assertEqual(required, [])
+        fields, required, errors = decode_contract({
+            "result_fields": [{"name": "answer", "type": "string"}, {"name": "pages", "type": "integer"}],
+        })
+        self.assertEqual(errors, [])
+        self.assertEqual(set(fields), {"answer", "pages"})
+        self.assertEqual(required, ["answer", "pages"])
 
     def test_json_schema_contract_form_is_supported(self) -> None:
         fields, required, errors = decode_contract({

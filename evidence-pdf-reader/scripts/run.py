@@ -17,6 +17,7 @@ from pdf_evidence.probe import probe_pdf_command
 from pdf_evidence.extractors import extract_command
 from pdf_evidence.context import select_context_command
 from pdf_evidence.coverage import coverage_report_command
+from pdf_evidence.pipeline import auto_command
 from pdf_evidence.result_io import finalize_result_command
 from pdf_evidence.validators import evaluate_order_command, validate_package_command, validate_result_command
 
@@ -49,6 +50,16 @@ def build_parser() -> argparse.ArgumentParser:
     command.add_argument("--capabilities", required=True)
     command.add_argument("--work", required=True)
     command.add_argument("--output", required=True)
+    command.add_argument("--order", choices=["naive", "layout"], default="layout")
+
+    command = subparsers.add_parser("auto", help="Run capabilities, inspect-case, probe, extract and coverage in one call")
+    command.add_argument("--case", required=True)
+    command.add_argument("--task", required=True)
+    command.add_argument("--pdf", action="append")
+    command.add_argument("--work", required=True)
+    command.add_argument("--output-dir", required=True)
+    command.add_argument("--resources")
+    command.add_argument("--backend", choices=["pymupdf", "poppler"])
     command.add_argument("--order", choices=["naive", "layout"], default="layout")
 
     command = subparsers.add_parser("evaluate-order", help="Compare document order with independent gold annotations")
@@ -109,6 +120,11 @@ def main(argv: list[str] | None = None) -> int:
             return probe_pdf_command(args.plan, args.capabilities, args.output, args.backend)
         if args.command == "extract":
             return extract_command(args.plan, args.probe, args.capabilities, args.work, args.output, args.order)
+        if args.command == "auto":
+            return auto_command(
+                args.case, args.task, args.pdf, args.work, args.output_dir,
+                args.resources, args.backend, args.order,
+            )
         if args.command == "evaluate-order":
             return evaluate_order_command(args.document, args.gold, args.output)
         if args.command == "select-context":

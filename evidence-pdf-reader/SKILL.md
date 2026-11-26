@@ -13,9 +13,29 @@ description: Parse scientific PDF cases with multi-column reading-order recovery
 
 如 `case.json`、`task.md` 或输出契约需要正式运行约定，先读 [runtime-contract.md](references/runtime-contract.md)。上下文目标约 256K tokens 或处理全文时必须读 [context-policy.md](references/context-policy.md)。
 
+## 最快路径（每案例 4–5 次请求）
+
+一次调用完成能力探测、案例解析、页面探测、坐标提取与结构覆盖清单；随后只做"选证据 → 写答案 → 合并校验"：
+
+```bash
+python <skill-dir>/scripts/run.py auto --case /input/case.json --task /input/task.md --work /app/work --output-dir /app/output
+python <skill-dir>/scripts/run.py select-context --plan /app/work/case-plan.json --document /app/work/document.json --index-output /app/work/context-index.json --budget-state /app/work/context-budget.json --output /app/work/selection-001.json --query "<任务关键词>"
+# 读 selection 中的入选区块原文，写 /app/work/answer.json
+python <skill-dir>/scripts/run.py finalize-result --plan /app/work/case-plan.json --document /app/work/document.json --answer /app/work/answer.json --output /app/output/result.json
+python <skill-dir>/scripts/run.py validate-result --plan /app/work/case-plan.json --document /app/work/document.json --result /app/output/result.json --output /app/work/result-validation.json
+```
+
+`auto` 打印 `auto_status`、页数、块数与每步退出码，并写 `<work>/auto-summary.json`（产物路径、块类型统计、`next_actions`）。任何一步失败都不中断，仍会写出已得到的产物与诊断摘要；`auto_status=incomplete` 时按摘要的 `next_actions` 补齐或如实降级。
+
+对输入不确定时以探针结果为准：`case.json` 缺 `case_id`、缺 `output_contract` 或没写 PDF 路径时，`inspect-case` 会推断（用文件名、最小 `answer` 契约、与 case.json 同目录的 PDF），并把 `inferred_case_id`/`inferred_contract`/`inferred_pdf_material` 写进 `case-plan.json` 的 `warnings`；`finalize-result` 会保留契约外的答案字段并记入 `extra_answer_fields`。不要把推断出的值当成原始契约冒充。
+
+对应本题四个判据：**提得全** 看 `document.json` 的 `kind`（body/heading/table/table_caption/figure/figure_caption/formula/reference/header/footer）与页覆盖；**排得对** 看 `page_reading_order`/`global_reading_order` 与栏位警告；**拆得清** 看标题层级、`table_row_count`/`table_data_row_count`、公式上下标与 `coverage_report`；**核得回** 看每条的 `page_number` + `block_id` + 逐字 `quote`。
+
 ## 执行顺序
 
 将 `<skill-dir>` 解析为本 Skill 的实际加载目录，不依赖当前工作目录。为每个案例选择独立 `<work>` 与 `<output>`；命令使用运行环境默认 `python`。不在正式运行时自动安装依赖、下载模型或使用机器专用环境命令。
+
+以下分步版本用于排查问题或需要单步控制时使用；正常任务优先用上面的最快路径。
 
 1. 探测真实能力，不因文档声明而假定工具可用：
 
@@ -94,11 +114,11 @@ description: Parse scientific PDF cases with multi-column reading-order recovery
 
 | 档位 | 适用 | 请求估算 | 关键做法 |
 | --- | --- | --- | --- |
-| 轻 | 单一问题、≤15 页 | 6–8 次 | capabilities / inspect-case / probe / extract / 1 次 select-context / 写答案 / finalize + validate |
-| 标准 | 2–3 个案例各 1–2 问 | 每案例 8–10 次 | 每个案例只做 1 次 `--query` 选择；页图仅在表格或公式存疑时取 1–2 张 |
+| 轻 | 单一问题、≤15 页 | 4–6 次 | `auto` 一次拿齐 document/coverage → 1 次 select-context → 写答案 → finalize + validate |
+| 标准 | 2–3 个案例各 1–2 问 | 每案例 4–6 次 | 每个案例只做 1 次 `--query` 选择；页图仅在表格或公式存疑时取 1–2 张 |
 | 长文 | >40 页且需全文产出 | 每 8–12 页 +1 次 | 先索引后按 `--section` 或 `--page` 分段，只对实际需要的段落 `--full-document` |
 
-省预算的硬规则：`extract` 只跑一次并复用 `document.json`；同一案例不重复 `probe-pdf`；答案一次写完再 `finalize-result`；页图不是"越多越好"，每次读取都会消耗未知的图像预算。若预算将尽仍未得出结论，把 `status` 降为 `partial` 并在 `uncertainty` 中写明缺哪一步，比继续重试更诚实。
+省预算的硬规则：每案例只跑一次 `auto`（或 `extract`）并复用 `document.json`；同一案例不重复 `probe-pdf`；答案一次写完再 `finalize-result`；页图不是"越多越好"，每次读取都会消耗未知的图像预算。若预算将尽仍未得出结论，把 `status` 降为 `partial` 并在 `uncertainty` 中写明缺哪一步，比继续重试更诚实。
 
 独立复核方法、已验证的论文清单与失败模式见 [benchmark.md](references/benchmark.md)。
 

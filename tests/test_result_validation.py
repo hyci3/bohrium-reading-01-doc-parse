@@ -58,6 +58,20 @@ class ResultValidationTest(unittest.TestCase):
         atomic_write_json(self.answer_path, answer)
         return answer
 
+    def test_answer_fields_outside_the_contract_are_preserved(self) -> None:
+        self.write_answer(fields={
+            "answer": "The measured value is 42.5 mV.",
+            "keywords": ["measurement"],
+            "paper_title": "A Synthetic Paper",
+            "limitations": "Only one page was supplied.",
+        })
+        code = finalize_result_command(self.plan_path, self.document_path, self.answer_path, self.result_path)
+        self.assertEqual(code, 0)
+        result = read_json(self.result_path)
+        self.assertEqual(result["paper_title"], "A Synthetic Paper")
+        self.assertEqual(result["limitations"], "Only one page was supplied.")
+        self.assertEqual(result["extra_answer_fields"], ["limitations", "paper_title"])
+
     def test_valid_answer_merges_and_validates(self) -> None:
         self.write_answer()
         initial = empty_result(

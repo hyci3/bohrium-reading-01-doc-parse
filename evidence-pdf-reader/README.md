@@ -10,6 +10,28 @@
 
 ## 快速开始
 
+先走最快路径：一条 `auto` 拿齐 `document.json` 与结构覆盖清单，再选证据、写答案、合并校验（每案例 4–5 次请求）。
+
+```bash
+python scripts/run.py auto --case /input/case.json --task /input/task.md \
+  --work /app/work --output-dir /app/output
+python scripts/run.py select-context --plan /app/work/case-plan.json \
+  --document /app/work/document.json --index-output /app/work/context-index.json \
+  --budget-state /app/work/context-budget.json --output /app/work/selection-001.json \
+  --query "数值与结论"
+python scripts/run.py finalize-result --plan /app/work/case-plan.json \
+  --document /app/work/document.json --answer /app/work/answer.json --output /app/output/result.json
+python scripts/run.py validate-result --plan /app/work/case-plan.json \
+  --document /app/work/document.json --result /app/output/result.json \
+  --output /app/work/result-validation.json
+```
+
+`auto` 依次执行 capabilities → inspect-case → probe-pdf → extract → coverage-report，打印 `auto_status`、页数、块数与每步退出码，并写 `work/auto-summary.json`（产物路径、块类型统计、`next_actions`）。单步失败不中断，仍写出已得到的产物与诊断。
+
+案例输入不规范时以探针结果为准：缺 `case_id`、缺 `output_contract` 或没写 PDF 路径时，`inspect-case` 会用文件名、最小 `answer` 契约、与 `case.json` 同目录的 PDF 兜底，并在 `case-plan.json` 的 `warnings` 里记 `inferred_case_id`/`inferred_contract`/`inferred_pdf_material`；`finalize-result` 保留契约外答案字段并写入 `extra_answer_fields`。
+
+需要单步控制或排查时，用展开版：
+
 ```bash
 # 1 能力探测（不因文档声明而假定工具可用）
 python scripts/run.py capabilities --output work/capabilities.json
@@ -48,6 +70,7 @@ python scripts/run.py coverage-report --document work/document.json --output wor
 
 | 命令 | 作用 |
 | --- | --- |
+| `auto` | 一次完成 capabilities → inspect-case → probe-pdf → extract → coverage-report，写 `auto-summary.json` |
 | `capabilities` | 探测 PyMuPDF、Poppler、OCR、图像渲染的真实可用性 |
 | `inspect-case` | 解析 `case.json`/`task.md` 与动态输出契约，写早期结果 |
 | `probe-pdf` | 逐页判定文字层、扫描、加密、损坏 |
